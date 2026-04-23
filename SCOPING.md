@@ -2,6 +2,9 @@
 
 > Authored by Gemini (Pro) on 2026-04-22 via <https://gemini.google.com/share/40b942ad3fff>.
 > Preserved here so Claude Code can use it for project setup and initial scoping.
+> Longer-form rationale (Mean Shift math, Axiom planar/spherical geometries, Bayer's
+> hand-crafting benefit, Gemma-4 NPU failure modes) lives in
+> [`docs/computational-colorimetry.md`](./docs/computational-colorimetry.md).
 
 ## 0. Project Intent (user's own words, paraphrased from the Gemini transcript)
 
