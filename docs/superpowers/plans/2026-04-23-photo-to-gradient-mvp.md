@@ -1209,3 +1209,263 @@ Expected: PASS — 5 tests green. (jsdom provides a `<canvas>` polyfill via the 
 git add src/lib/gradient-canvas.ts src/lib/gradient-canvas.test.ts
 git commit -m "Add OKLab gradient canvas renderer + PNG export"
 ```
+
+---
+
+## Task 8 · `Capture.tsx` — file input → worker → chips
+
+The first user-facing screen. Loads a photo via the native file picker, pushes its `ImageData` into the mean-shift worker, renders the returned hexes as chips with add/added states.
+
+**Files:**
+- Create: `src/pages/Capture.tsx`
+- Create: `src/pages/Capture.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/pages/Capture.test.tsx`:
+
+```tsx
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { PaletteProvider } from "../lib/palette-store";
+import Capture from "./Capture";
+
+vi.mock("../lib/mean-shift.worker", () => ({
+  extractPalette: vi.fn(() => ["#FF0000", "#00FF00", "#0000FF"]),
+}));
+
+function renderCapture() {
+  return render(
+    <MemoryRouter>
+      <PaletteProvider>
+        <Capture />
+      </PaletteProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("Capture page", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows the take/upload button when no photo loaded", () => {
+    renderCapture();
+    expect(screen.getByRole("button", { name: /take.*photo|upload/i })).toBeInTheDocument();
+  });
+
+  it("renders chips after extraction returns", async () => {
+    renderCapture();
+    const file = new File([new Uint8Array([1, 2, 3])], "test.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await act(async () => {
+      await userEvent.upload(input, file);
+    });
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /add color #/i }).length).toBe(3);
+    });
+  });
+
+  it("Accept all adds all unaccepted chips and disables them", async () => {
+    renderCapture();
+    const file = new File([new Uint8Array([1, 2, 3])], "test.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await act(async () => {
+      await userEvent.upload(input, file);
+    });
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /add color #/i }).length).toBe(3),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /accept all/i }));
+    expect(screen.queryAllByRole("button", { name: /add color #/i }).length).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npm test -- Capture`
+Expected: FAIL — "Cannot find module './Capture'".
+
+- [ ] **Step 3: Implement `src/pages/Capture.tsx`**
+
+```tsx
+import { useEffect, useRef, useState } from "react";
+import {
+  IonButton,
+  IonContent,
+  IonHeader,
+  IonPage,
+  IonProgressBar,
+  IonText,
+  IonTitle,
+  IonToast,
+  IonToolbar,
+} from "@ionic/react";
+import { useHistory } from "react-router-dom";
+import { extractPalette } from "../lib/mean-shift.worker";
+import { usePalette } from "../lib/palette-store";
+
+type Status = "idle" | "extracting" | "ready" | "error";
+
+export default function Capture() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [status, setStatus] = useState<Status>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { state, dispatch } = usePalette();
+  const history = useHistory();
+
+  useEffect(() => () => {
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+  }, [photoUrl]);
+
+  async function handleFile(file: File) {
+    setStatus("extracting");
+    setCandidates([]);
+    setAccepted(new Set());
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    setPhotoUrl(URL.createObjectURL(file));
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas context");
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+      const hexes = extractPalette(imageData);
+      if (hexes.length === 0) {
+        setStatus("error");
+        setErrorMsg("Couldn't find distinct colors in this photo");
+        return;
+      }
+      setCandidates(hexes);
+      setStatus("ready");
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Extraction failed");
+    }
+  }
+
+  function addOne(hex: string) {
+    dispatch({ type: "ADD_COLOR", hex });
+    setAccepted((prev) => new Set(prev).add(hex));
+  }
+
+  function acceptAll() {
+    for (const hex of candidates) {
+      if (!accepted.has(hex)) dispatch({ type: "ADD_COLOR", hex });
+    }
+    setAccepted(new Set(candidates));
+  }
+
+  return (
+    <IonPage>
+      <IonHeader>
+        <IonToolbar>
+          <IonTitle>Capture</IonTitle>
+        </IonToolbar>
+      </IonHeader>
+      <IonContent className="ion-padding">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFile(f);
+          }}
+        />
+
+        {!photoUrl && (
+          <IonButton expand="block" onClick={() => inputRef.current?.click()}>
+            Take or upload photo
+          </IonButton>
+        )}
+
+        {photoUrl && (
+          <img
+            src={photoUrl}
+            alt="captured"
+            style={{ maxWidth: "100%", maxHeight: 360, borderRadius: 8 }}
+          />
+        )}
+
+        {status === "extracting" && <IonProgressBar type="indeterminate" />}
+
+        {status === "ready" && (
+          <>
+            <IonText>
+              <p>
+                Tap a swatch to add it to your palette. Already added: {accepted.size} /{" "}
+                {candidates.length}.
+              </p>
+            </IonText>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
+              {candidates.map((hex) => {
+                const isAdded = accepted.has(hex);
+                return (
+                  <button
+                    key={hex}
+                    type="button"
+                    aria-label={isAdded ? `Added color ${hex}` : `Add color ${hex}`}
+                    onClick={() => !isAdded && addOne(hex)}
+                    disabled={isAdded}
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: "50%",
+                      background: hex,
+                      border: isAdded ? "3px solid var(--ion-color-primary)" : "none",
+                      cursor: isAdded ? "default" : "pointer",
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <IonButton onClick={acceptAll} disabled={accepted.size === candidates.length}>
+              Accept all
+            </IonButton>
+            <IonButton onClick={() => inputRef.current?.click()} fill="outline">
+              Add another photo
+            </IonButton>
+            <IonButton
+              expand="block"
+              onClick={() => history.push("/palette")}
+              disabled={state.colors.length < 2}
+            >
+              Next → Palette ({state.colors.length})
+            </IonButton>
+          </>
+        )}
+
+        <IonToast
+          isOpen={status === "error"}
+          message={errorMsg ?? ""}
+          duration={3000}
+          onDidDismiss={() => setStatus("idle")}
+        />
+      </IonContent>
+    </IonPage>
+  );
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npm test -- Capture`
+Expected: PASS — all 3 component tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/pages/Capture.tsx src/pages/Capture.test.tsx
+git commit -m "Add Capture page: file input → worker → chips → accept"
+```
