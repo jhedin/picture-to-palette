@@ -1707,3 +1707,324 @@ Expected: PASS — 4 component tests green.
 git add src/pages/Palette.tsx src/pages/Palette.test.tsx
 git commit -m "Add Palette page: swatch grid + anchor state + remove"
 ```
+
+---
+
+## Task 10 · `Gradients.tsx` — candidates + save
+
+Final screen of the flow. Reads the two anchors and the palette from the store, computes 3–4 candidate gradients with *k* ∈ {0,1,2,3} intermediates, renders each as a selectable strip, saves the chosen one as a PNG download.
+
+**Files:**
+- Create: `src/pages/Gradients.tsx`
+- Create: `src/pages/Gradients.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/pages/Gradients.test.tsx`:
+
+```tsx
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import {
+  PaletteProvider,
+  usePalette,
+} from "../lib/palette-store";
+import Gradients from "./Gradients";
+
+vi.mock("../lib/gradient-canvas", () => ({
+  renderGradientPng: vi.fn(async () => "data:image/png;base64,FAKE"),
+  sampleGradientStop: (colors: string[], t: number) => colors[Math.floor(t * (colors.length - 1))],
+}));
+
+function Seeder({ hexes, anchors }: { hexes: string[]; anchors: [number, number] }) {
+  const { state, dispatch } = usePalette();
+  if (state.colors.length === 0) {
+    for (const h of hexes) dispatch({ type: "ADD_COLOR", hex: h });
+  } else if (state.anchorA === null) {
+    dispatch({ type: "TAP_SWATCH", id: state.colors[anchors[0]].id });
+    dispatch({ type: "TAP_SWATCH", id: state.colors[anchors[1]].id });
+  }
+  return null;
+}
+
+function renderGradients(hexes: string[], anchors: [number, number]) {
+  return render(
+    <MemoryRouter>
+      <PaletteProvider>
+        <Seeder hexes={hexes} anchors={anchors} />
+        <Gradients />
+      </PaletteProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("Gradients page", () => {
+  it("renders at least one candidate when both anchors set", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF", "#FFFF00"], [0, 1]);
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /gradient candidate/i }).length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("Save is disabled until a candidate is selected", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 1]);
+    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
+    const save = screen.getByRole("button", { name: /^save$/i });
+    expect(save).toBeDisabled();
+    await userEvent.click(screen.getAllByRole("button", { name: /gradient candidate/i })[0]);
+    expect(save).not.toBeDisabled();
+  });
+
+  it("clicking Save calls renderGradientPng", async () => {
+    const mod = await import("../lib/gradient-canvas");
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 1]);
+    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
+    await userEvent.click(screen.getAllByRole("button", { name: /gradient candidate/i })[0]);
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(mod.renderGradientPng).toHaveBeenCalled());
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npm test -- Gradients`
+Expected: FAIL — "Cannot find module './Gradients'".
+
+- [ ] **Step 3: Implement `src/pages/Gradients.tsx`**
+
+```tsx
+import { useMemo, useState } from "react";
+import {
+  IonButton,
+  IonContent,
+  IonHeader,
+  IonPage,
+  IonText,
+  IonTitle,
+  IonToast,
+  IonToolbar,
+} from "@ionic/react";
+import { useHistory } from "react-router-dom";
+import { usePalette } from "../lib/palette-store";
+import { pickIntermediates } from "../lib/color";
+import { renderGradientPng } from "../lib/gradient-canvas";
+
+interface Candidate {
+  id: string;
+  colors: string[];
+}
+
+export default function Gradients() {
+  const { state } = usePalette();
+  const history = useHistory();
+  const [selected, setSelected] = useState<string | null>(null);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  const anchorA = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
+  const anchorB = state.colors.find((c) => c.id === state.anchorB)?.hex ?? null;
+  const paletteHexes = state.colors.map((c) => c.hex);
+
+  const candidates: Candidate[] = useMemo(() => {
+    if (!anchorA || !anchorB) return [];
+    const out: Candidate[] = [{ id: "k0", colors: [anchorA, anchorB] }];
+    for (const k of [1, 2, 3]) {
+      const intermediates = pickIntermediates(paletteHexes, anchorA, anchorB, k);
+      if (intermediates.length === k) {
+        out.push({ id: `k${k}`, colors: [anchorA, ...intermediates, anchorB] });
+      }
+    }
+    return out;
+  }, [anchorA, anchorB, paletteHexes]);
+
+  async function handleSave() {
+    const candidate = candidates.find((c) => c.id === selected);
+    if (!candidate) return;
+    const dataUrl = await renderGradientPng(candidate.colors, 1080, 240);
+    const a = document.createElement("a");
+    const ts = new Date()
+      .toISOString()
+      .replace(/[:T]/g, "-")
+      .slice(0, 16);
+    a.href = dataUrl;
+    a.download = `palette-${ts}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setSavedMsg("Saved to downloads");
+  }
+
+  if (!anchorA || !anchorB) {
+    return (
+      <IonPage>
+        <IonHeader>
+          <IonToolbar>
+            <IonTitle>Gradients</IonTitle>
+          </IonToolbar>
+        </IonHeader>
+        <IonContent className="ion-padding">
+          <IonText>
+            <p>Pick two anchors on the Palette screen first.</p>
+          </IonText>
+          <IonButton expand="block" onClick={() => history.push("/palette")}>
+            Back to Palette
+          </IonButton>
+        </IonContent>
+      </IonPage>
+    );
+  }
+
+  return (
+    <IonPage>
+      <IonHeader>
+        <IonToolbar>
+          <IonTitle>Gradients</IonTitle>
+        </IonToolbar>
+      </IonHeader>
+      <IonContent className="ion-padding">
+        <IonText>
+          <p>Pick a candidate, then tap Save.</p>
+        </IonText>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {candidates.map((c) => {
+            const isSelected = selected === c.id;
+            const stops = c.colors
+              .map((hex, i) => `${hex} ${((i / (c.colors.length - 1)) * 100).toFixed(1)}%`)
+              .join(", ");
+            return (
+              <button
+                type="button"
+                key={c.id}
+                aria-label={`Gradient candidate ${c.id}`}
+                onClick={() => setSelected(c.id)}
+                style={{
+                  height: 64,
+                  borderRadius: 10,
+                  border: isSelected
+                    ? "3px solid var(--ion-color-primary)"
+                    : "1px solid #ccc",
+                  background: `linear-gradient(in oklab to right, ${stops})`,
+                  padding: 0,
+                  cursor: "pointer",
+                }}
+              />
+            );
+          })}
+        </div>
+        <IonButton
+          expand="block"
+          onClick={handleSave}
+          disabled={!selected}
+          style={{ marginTop: 16 }}
+        >
+          Save
+        </IonButton>
+        <IonToast
+          isOpen={savedMsg !== null}
+          message={savedMsg ?? ""}
+          duration={2000}
+          onDidDismiss={() => setSavedMsg(null)}
+        />
+      </IonContent>
+    </IonPage>
+  );
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npm test -- Gradients`
+Expected: PASS — 3 component tests green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/pages/Gradients.tsx src/pages/Gradients.test.tsx
+git commit -m "Add Gradients page: candidates + Save as PNG"
+```
+
+---
+
+## Task 11 · Wire routes in `App.tsx`, retire `Home`
+
+Replace the `/home` placeholder with the three real routes. Wrap the tree in `PaletteProvider`.
+
+**Files:**
+- Modify: `src/App.tsx`
+- Delete: `src/pages/Home.tsx`, `src/pages/Home.test.tsx`
+- Modify: `e2e/smoke.spec.ts` (gets deleted in Task 12 — for now, make it pass by targeting new copy)
+
+- [ ] **Step 1: Replace `src/App.tsx`**
+
+```tsx
+import { IonApp, IonRouterOutlet } from "@ionic/react";
+import { IonReactRouter } from "@ionic/react-router";
+import { Redirect, Route } from "react-router-dom";
+import Capture from "./pages/Capture";
+import Palette from "./pages/Palette";
+import Gradients from "./pages/Gradients";
+import { PaletteProvider } from "./lib/palette-store";
+
+export default function App() {
+  return (
+    <IonApp>
+      <PaletteProvider>
+        <IonReactRouter>
+          <IonRouterOutlet>
+            <Route exact path="/capture" component={Capture} />
+            <Route exact path="/palette" component={Palette} />
+            <Route exact path="/gradients" component={Gradients} />
+            <Route exact path="/">
+              <Redirect to="/capture" />
+            </Route>
+          </IonRouterOutlet>
+        </IonReactRouter>
+      </PaletteProvider>
+    </IonApp>
+  );
+}
+```
+
+- [ ] **Step 2: Delete the placeholder Home page**
+
+```bash
+git rm src/pages/Home.tsx src/pages/Home.test.tsx
+```
+
+- [ ] **Step 3: Update the existing smoke E2E to match new copy (temporary)**
+
+Edit `e2e/smoke.spec.ts`:
+
+```ts
+import { test, expect } from "@playwright/test";
+
+test("app loads at /capture", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/capture$/);
+  await expect(page.getByRole("button", { name: /take or upload photo/i })).toBeVisible();
+});
+```
+
+- [ ] **Step 4: Run the full unit suite**
+
+Run: `npm test`
+Expected: PASS — all tests across color, mean-shift, palette-store, gradient-canvas, Capture, Palette, Gradients.
+
+- [ ] **Step 5: Typecheck**
+
+Run: `npm run typecheck`
+Expected: exit 0.
+
+- [ ] **Step 6: Boot dev server and smoke-check manually in Playwright**
+
+Run: `npx playwright install chromium` (first run only) then `npm run test:e2e -- --project=chromium smoke.spec.ts`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/App.tsx e2e/smoke.spec.ts
+git commit -m "Wire /capture, /palette, /gradients routes; retire Home placeholder"
+```
