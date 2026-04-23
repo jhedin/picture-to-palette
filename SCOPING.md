@@ -1,7 +1,29 @@
 # Project Scoping & Architecture Document: Procedural Yarn Crafting App
 
 > Authored by Gemini (Pro) on 2026-04-22 via <https://gemini.google.com/share/40b942ad3fff>.
-> Preserved verbatim here so Claude Code can use it for project setup and initial scoping.
+> Preserved here so Claude Code can use it for project setup and initial scoping.
+
+## 0. Project Intent (user's own words, paraphrased from the Gemini transcript)
+
+An Android app (possibly with web components) for fiber-arts crafters that:
+
+- Takes pictures of wool/yarn balls and develops a **constrained palette** from
+  what the user already owns.
+- Takes pictures of designs the user has traced and returns the **DMC threads
+  they need to buy** to stitch it.
+- Hands the constrained palette to **Minecraft-style gradient tools** (Axiom /
+  HueBlocks) to plan wool-ball gradients for knit/crochet projects.
+- Accepts a **pattern website URL** that a scraping agent parses into a
+  structured setup (brand, colors, yardage) which can then be converted back
+  into a wool-ball gradient and shopping list.
+- Aggregates everything into a final shopping list, eventually considering
+  **local craft store availability in Calgary, Alberta**.
+
+Architectural preference: keep the Android app itself small and responsive;
+**offload heavy work (scraping agents, image segmentation, Mean Shift) to the
+cloud**, since running large models like Gemma on-device has been unstable in
+practice. On-device frameworks (MediaPipe, LiteRT) remain a fallback for
+lightweight vision tasks if/when offline use matters.
 
 ## 1. High-Level Architecture & Phasing
 
@@ -85,6 +107,28 @@ print(result.json())
 
 - **Web Scraping / Data Extraction:** Anthropic's Claude 3.5 Sonnet or OpenAI's GPT-4o. Both are industry leaders at reliably adhering to complex Pydantic JSON schemas during extraction tasks.
 - **Image Processing / Mean Shift:** A simple Python serverless container running scikit-learn (`sklearn.cluster.MeanShift`). If you want to segment the image first (e.g., separate the wool balls from the table they sit on), use MediaPipe's Image Segmenter API.
+
+## 5. Deterministic Fallbacks
+
+Before invoking the LLM scraping agent, the backend should check the URL's
+domain. If it belongs to **Ravelry**, bypass the agent entirely and call the
+documented Ravelry REST API (OAuth 1.0a) directly — e.g. `/patterns/{id}.json`
+— which returns structured pattern and yardage data deterministically and at
+zero LLM cost. Reserve the Browserless/LangChain agent for independent blogs
+and non-standard sites.
+
+## 6. On-Device Alternatives (Offline / Cost-Sensitive Fallbacks)
+
+If server cost or offline operation matters, the following on-device options
+were noted (no URLs provided by Gemini — look up by name):
+
+- **MediaPipe Image Segmenter** — lightweight, real-time segmentation on
+  Android; good for separating wool balls from background before extraction.
+- **LiteRT** (Google's modern TensorFlow Lite runtime) — for running small
+  vision or classification models locally.
+- **Running Gemma on-device** was tried and found unstable (GPU/NPU compile
+  errors, CPU fallback doubles latency, background tasks can kill generation).
+  Treat as not viable for the agent workloads.
 
 ## References
 
