@@ -72,6 +72,8 @@ For the autonomous agent that reads crafting blogs and returns a shopping list, 
 2. **Structured Output (Pydantic):** Define a strict Pydantic schema representing the data you want the LLM to extract (e.g., Pattern Name, Yarn Brand, Color, Yardage).
 3. **LLM Extraction:** Pass the loaded document and the Pydantic schema to the LLM using the `with_structured_output` method. This forces the model to return a perfectly formatted JSON object containing your shopping list, completely ignoring the blog's formatting or extra text.
 
+> **API-drift note (2026-04):** LangChain now documents `create_agent(model=..., response_format=Schema)` as the primary structured-output path; the result lands in `result["structured_response"]`. The `with_structured_output` method on a ChatModel still works. See [`docs/references-notes.md`](./docs/references-notes.md) for the full reference survey, API shapes, and where `Sharma` conformance data lives now that its server is flaky.
+
 **Python Blueprint for Claude Code:**
 
 ```python
