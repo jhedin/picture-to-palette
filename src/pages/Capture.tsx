@@ -14,6 +14,7 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { extractPalette, suggestCrop, type CropBox, type DebugData, type ExtractionOptions, DEFAULT_OPTIONS } from "../lib/mean-shift.worker";
+import { hexToOklab, oklabToHex } from "../lib/color";
 import { usePalette } from "../lib/palette-store";
 import { CropOverlay } from "../components/CropOverlay";
 
@@ -34,6 +35,8 @@ export default function Capture() {
   const [options, setOptions] = useState<ExtractionOptions>({ ...DEFAULT_OPTIONS });
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeFirst, setMergeFirst] = useState<string | null>(null);
   const { state, dispatch } = usePalette();
   const history = useHistory();
 
@@ -123,6 +126,24 @@ export default function Capture() {
 
   function clearUnselected() {
     setCandidates(Array.from(accepted));
+  }
+
+  function handleCandidateTap(hex: string) {
+    if (!mergeMode) { addOne(hex); return; }
+    if (mergeFirst === null) { setMergeFirst(hex); return; }
+    if (mergeFirst === hex) { setMergeFirst(null); return; }
+    // Two different chips tapped — average in OKLab and replace both.
+    const labA = hexToOklab(mergeFirst);
+    const labB = hexToOklab(hex);
+    const merged = oklabToHex({ L: (labA.L + labB.L) / 2, a: (labA.a + labB.a) / 2, b: (labA.b + labB.b) / 2 });
+    setCandidates((prev) => {
+      const idx = Math.min(prev.indexOf(mergeFirst), prev.indexOf(hex));
+      const without = prev.filter((h) => h !== mergeFirst && h !== hex);
+      without.splice(idx, 0, merged);
+      return without;
+    });
+    setMergeFirst(null);
+    setMergeMode(false);
   }
 
   function clearAll() {
@@ -314,7 +335,27 @@ export default function Capture() {
         {status === "ready" && (
           <>
             {/* Found colors */}
-            <SectionLabel>Found in this crop</SectionLabel>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <SectionLabel style={{ margin: 0 }}>
+                {mergeMode
+                  ? mergeFirst ? "Now tap the second color to merge" : "Tap the first color to merge"
+                  : "Found in this crop"}
+              </SectionLabel>
+              {unadded.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => { setMergeMode((v) => !v); setMergeFirst(null); }}
+                  style={{
+                    background: mergeMode ? "var(--ion-color-primary)" : "none",
+                    color: mergeMode ? "var(--ion-color-primary-contrast)" : "var(--ion-color-primary)",
+                    border: "1px solid var(--ion-color-primary)",
+                    borderRadius: 12, fontSize: 11, padding: "2px 10px", cursor: "pointer",
+                  }}
+                >
+                  {mergeMode ? "Cancel merge" : "Merge…"}
+                </button>
+              )}
+            </div>
             {unadded.length === 0 ? (
               <IonText color="medium">
                 <p style={{ margin: "0 0 12px", fontSize: 13 }}>All found colors have been added.</p>
@@ -327,18 +368,25 @@ export default function Capture() {
                     showDebug && debugData && extIdx >= 0
                       ? Math.round((debugData.clusterSizes[extIdx] / totalSegPixels) * 100)
                       : null;
+                  const isFirstSelected = mergeFirst === hex;
                   return (
                     <div key={hex} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                       <button
                         type="button"
-                        aria-label={`Add color ${hex}`}
-                        draggable
-                        onDragStart={(e) => e.dataTransfer.setData("text/plain", hex)}
-                        onClick={() => addOne(hex)}
+                        aria-label={mergeMode ? `Select ${hex} for merge` : `Add color ${hex}`}
+                        draggable={!mergeMode}
+                        onDragStart={(e) => !mergeMode && e.dataTransfer.setData("text/plain", hex)}
+                        onClick={() => handleCandidateTap(hex)}
                         style={{
                           width: 52, height: 52, borderRadius: "50%", background: hex,
-                          border: "2px solid rgba(0,0,0,0.15)",
-                          cursor: "grab",
+                          border: isFirstSelected
+                            ? "3px solid var(--ion-color-warning)"
+                            : mergeMode
+                            ? "3px dashed var(--ion-color-primary)"
+                            : "2px solid rgba(0,0,0,0.15)",
+                          cursor: mergeMode ? "pointer" : "grab",
+                          transform: isFirstSelected ? "scale(1.1)" : undefined,
+                          transition: "transform 0.1s, border 0.1s",
                         }}
                       />
                       {pct !== null && (
@@ -479,9 +527,9 @@ export default function Capture() {
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <p style={{ margin: "0 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+    <p style={{ margin: "0 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)", ...style }}>
       {children}
     </p>
   );
