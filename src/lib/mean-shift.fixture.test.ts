@@ -207,10 +207,7 @@ describe("3-skeins-yellow.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
 
   it("yellow background variants are not more numerous than baseline (texture flattened)", () => {
     const yellowVariants = (hexes: string[]) =>
-      hexes.filter((h) => {
-        const { a, b } = hexToOklab(h);
-        return hasHue([h], 75, 115, 0.06);
-      }).length;
+      hexes.filter((h) => hasHue([h], 75, 115, 0.06)).length;
     // Kuwahara should not *increase* the number of yellow variants
     expect(yellowVariants(withKuwahara)).toBeLessThanOrEqual(yellowVariants(baseline) + 1);
   });
