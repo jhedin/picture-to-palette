@@ -64,17 +64,22 @@ export function dedupByDeltaE(hexes: string[], threshold: number): string[] {
 
 export type GradientMode = "natural" | "lightness" | "saturation" | "hue";
 
+const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
+const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+
 /**
- * Given two anchor colours, find which palette colours fall *between* them
- * along the A→B line in OKLab space (projection t strictly in (0, 1)),
- * then sort the filtered set according to `mode`:
+ * Given two anchor colours and a mode, return every palette colour that
+ * falls *between* the anchors according to the mode's own axis, sorted
+ * from A toward B along that axis.  Each mode uses a different filter
+ * *and* a different sort so the candidate set genuinely changes.
  *
- *   natural    — sort by position along the OKLab A→B vector (default)
- *   lightness  — sort by L, ascending from A's lightness toward B's
- *   saturation — sort by OKLCH chroma C, ascending from A's toward B's
- *   hue        — sort by hue angle, taking the shorter arc from A to B
+ *   natural    — OKLab projection t ∈ (0,1); sorted by t
+ *   lightness  — L strictly between LA and LB; sorted by L
+ *   saturation — chroma C strictly between CA and CB; sorted by C
+ *   hue        — hue h on the shorter arc hA→hB (exclusive); sorted by h
  *
- * The full gradient sequence is: [anchorA, ...gradientBetween(...), anchorB]
+ * Use pickEvenly(result, n) to select n colours spread across the sequence.
+ * The full gradient is: [anchorA, ...pickEvenly(gradientBetween(...), n), anchorB]
  */
 export function gradientBetween(
   palette: string[],
@@ -84,53 +89,80 @@ export function gradientBetween(
 ): string[] {
   const a = hexToOklab(anchorA);
   const b = hexToOklab(anchorB);
-  const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
-  const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
-  if (abLenSq === 0) return [];
 
   const normA = normalizeHex(anchorA);
   const normB = normalizeHex(anchorB);
-
-  // Filter: only colours whose OKLab projection lands strictly between A and B.
-  const candidates = palette
+  const base = palette
     .map(normalizeHex)
     .filter((h): h is string => h !== null && h !== normA && h !== normB)
-    .map((hex) => {
-      const lab = hexToOklab(hex);
-      const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
-      const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-      return { hex, t, lab };
-    })
-    .filter(({ t }) => t > 0 && t < 1);
+    .map((hex) => ({ hex, lab: hexToOklab(hex) }));
 
-  // Sort according to mode.
   if (mode === "natural") {
-    candidates.sort((x, y) => x.t - y.t);
+    const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
+    const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
+    if (abLenSq === 0) return [];
+    return base
+      .map(({ hex, lab }) => {
+        const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
+        const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+        return { hex, t };
+      })
+      .filter(({ t }) => t > 0 && t < 1)
+      .sort((x, y) => x.t - y.t)
+      .map(({ hex }) => hex);
 
   } else if (mode === "lightness") {
+    const lo = Math.min(a.L, b.L), hi = Math.max(a.L, b.L);
     const asc = a.L <= b.L;
-    candidates.sort((x, y) => asc ? x.lab.L - y.lab.L : y.lab.L - x.lab.L);
+    return base
+      .filter(({ lab }) => lab.L > lo && lab.L < hi)
+      .sort((x, y) => asc ? x.lab.L - y.lab.L : y.lab.L - x.lab.L)
+      .map(({ hex }) => hex);
 
   } else if (mode === "saturation") {
-    const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+    const lo = Math.min(chromaOf(a), chromaOf(b));
+    const hi = Math.max(chromaOf(a), chromaOf(b));
     const asc = chromaOf(a) <= chromaOf(b);
-    candidates.sort((x, y) =>
-      asc ? chromaOf(x.lab) - chromaOf(y.lab) : chromaOf(y.lab) - chromaOf(x.lab),
-    );
+    return base
+      .filter(({ lab }) => { const c = chromaOf(lab); return c > lo && c < hi; })
+      .sort((x, y) => asc
+        ? chromaOf(x.lab) - chromaOf(y.lab)
+        : chromaOf(y.lab) - chromaOf(x.lab))
+      .map(({ hex }) => hex);
 
-  } else if (mode === "hue") {
-    const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
-    const hA = hueOf(a);
-    const hB = hueOf(b);
-    // Signed angular difference hA→hB on the shorter arc (−180..180).
+  } else { // hue
+    const hA = hueOf(a), hB = hueOf(b);
+    // Signed arc hA→hB on the shorter path (−180..180); positive = clockwise.
     const diff = ((hB - hA + 540) % 360) - 180;
-    candidates.sort((x, y) => {
-      // Project each hue onto the arc from hA in the direction of diff.
-      const tx = ((hueOf(x.lab) - hA) * Math.sign(diff) + 720) % 360;
-      const ty = ((hueOf(y.lab) - hA) * Math.sign(diff) + 720) % 360;
-      return tx - ty;
-    });
+    return base
+      .filter(({ lab }) => {
+        // Angular distance from hA in the direction of the shorter arc.
+        const pos = ((hueOf(lab) - hA) * Math.sign(diff) + 720) % 360;
+        return pos > 0 && pos < Math.abs(diff);
+      })
+      .sort((x, y) => {
+        const tx = ((hueOf(x.lab) - hA) * Math.sign(diff) + 720) % 360;
+        const ty = ((hueOf(y.lab) - hA) * Math.sign(diff) + 720) % 360;
+        return tx - ty;
+      })
+      .map(({ hex }) => hex);
   }
+}
 
-  return candidates.map(({ hex }) => hex);
+/**
+ * Pick n colours evenly spaced across a sorted inbetween list.
+ * For n=1: the middle colour.  For n=2: roughly ⅓ and ⅔ through.
+ * Returns all colours if n >= list length.
+ */
+export function pickEvenly(sorted: string[], n: number): string[] {
+  if (n <= 0 || sorted.length === 0) return [];
+  if (n >= sorted.length) return sorted;
+  const M = sorted.length;
+  const result: string[] = [];
+  for (let i = 0; i < n; i++) {
+    // Divide M items into n equal bands; pick the midpoint of each band.
+    // Floor guarantees unique indices since band width M/n >= 1.
+    result.push(sorted[Math.floor((i + 0.5) * M / n)]);
+  }
+  return result;
 }

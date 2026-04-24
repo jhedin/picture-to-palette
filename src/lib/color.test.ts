@@ -7,6 +7,7 @@ import {
   oklabToHex,
   dedupByDeltaE,
   gradientBetween,
+  pickEvenly,
   type Oklab,
 } from "./color";
 
@@ -202,5 +203,46 @@ describe("gradientBetween", () => {
       expect(result).not.toContain(normalizeHex(A));
       expect(result).not.toContain(normalizeHex(B));
     });
+  });
+});
+
+describe("pickEvenly", () => {
+  const LIST = ["a", "b", "c", "d", "e"]; // 5 items, indices 0-4
+
+  it("returns empty for n=0", () => {
+    expect(pickEvenly(LIST, 0)).toEqual([]);
+  });
+
+  it("returns empty for empty input", () => {
+    expect(pickEvenly([], 3)).toEqual([]);
+  });
+
+  it("returns all items when n >= list length", () => {
+    expect(pickEvenly(LIST, 5)).toEqual(LIST);
+    expect(pickEvenly(LIST, 99)).toEqual(LIST);
+  });
+
+  it("n=1 picks the middle item", () => {
+    // i=0: floor(0.5 * 5/1) = floor(2.5) = 2 → "c"
+    expect(pickEvenly(LIST, 1)).toEqual(["c"]);
+  });
+
+  it("n=2 picks items near ⅓ and ⅔ through", () => {
+    // i=0: floor(0.5 * 5/2) = floor(1.25) = 1 → "b"
+    // i=1: floor(1.5 * 5/2) = floor(3.75) = 3 → "d"
+    expect(pickEvenly(LIST, 2)).toEqual(["b", "d"]);
+  });
+
+  it("n=4 on 5-item list picks 4 distinct items", () => {
+    const result = pickEvenly(LIST, 4);
+    expect(result).toHaveLength(4);
+    result.forEach((item) => expect(LIST).toContain(item));
+  });
+
+  it("never returns duplicates for any valid n", () => {
+    for (let n = 1; n <= LIST.length; n++) {
+      const result = pickEvenly(LIST, n);
+      expect(new Set(result).size).toBe(result.length);
+    }
   });
 });

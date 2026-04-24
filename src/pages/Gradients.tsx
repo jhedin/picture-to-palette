@@ -4,6 +4,7 @@ import {
   IonContent,
   IonHeader,
   IonPage,
+  IonRange,
   IonText,
   IonTitle,
   IonToast,
@@ -11,13 +12,14 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
-import { gradientBetween, type GradientMode } from "../lib/color";
+import { gradientBetween, pickEvenly, type GradientMode } from "../lib/color";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
   const [mode, setMode] = useState<GradientMode>("natural");
+  const [count, setCount] = useState(1);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const anchorA = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
@@ -32,15 +34,18 @@ export default function Gradients() {
     return gradientBetween(paletteHexes, anchorA, anchorB, mode);
   }, [anchorA, anchorB, paletteHexes, mode]);
 
+  const picked = useMemo(() => pickEvenly(inbetween, count), [inbetween, count]);
+
   const gradient = useMemo(
-    () => (anchorA && anchorB ? [anchorA, ...inbetween, anchorB] : []),
-    [anchorA, anchorB, inbetween],
+    () => (anchorA && anchorB ? [anchorA, ...picked, anchorB] : []),
+    [anchorA, anchorB, picked],
   );
 
-  // Reset saved message when anchors change.
+  // Reset saved message and count when anchors or mode change.
   useEffect(() => {
     setSavedMsg(null);
-  }, [state.anchorA, state.anchorB]);
+    setCount(1);
+  }, [state.anchorA, state.anchorB, mode]);
 
   async function handleSave() {
     if (gradient.length === 0) return;
@@ -109,10 +114,27 @@ export default function Gradients() {
         <IonText>
           <p style={{ margin: "0 0 8px" }}>
             {inbetween.length > 0
-              ? `${inbetween.length} colour${inbetween.length !== 1 ? "s" : ""} between your anchors.`
+              ? `${inbetween.length} colour${inbetween.length !== 1 ? "s" : ""} available between your anchors.`
               : "No palette colours fall between these anchors."}
           </p>
         </IonText>
+
+        {inbetween.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <IonText>
+              <p style={{ margin: "0 0 4px", fontSize: 13 }}>
+                Inbetweens: {count} / {inbetween.length}
+              </p>
+            </IonText>
+            <IonRange
+              min={1}
+              max={inbetween.length}
+              step={1}
+              value={count}
+              onIonChange={(e) => setCount(e.detail.value as number)}
+            />
+          </div>
+        )}
 
         {/* Solid colour blocks — equal width, no blending */}
         <div
