@@ -16,14 +16,17 @@ afterEach(() => {
     const el = OriginalCreateElement(tag, opts as ElementCreationOptions);
     if (tag.toLowerCase() === "canvas") {
       (el as HTMLCanvasElement).getContext = (() => {
-        const imgDataStore = new Map<string, ImageData>();
+        let _w = 1;
+        let _h = 1;
         const ctx = {
           createImageData(w: number, h: number): ImageData {
             return new ImageData(new Uint8ClampedArray(w * h * 4), w, h);
           },
-          putImageData(data: ImageData, _x: number, _y: number) {
-            imgDataStore.set("main", data);
+          putImageData() {},
+          getImageData(x: number, y: number, w: number, h: number): ImageData {
+            return new ImageData(new Uint8ClampedArray(w * h * 4), w, h);
           },
+          drawImage() {},
           fillRect() {},
           fillText() {},
           get fillStyle() { return ""; },
@@ -34,6 +37,7 @@ afterEach(() => {
           set textAlign(_v: unknown) {},
           get textBaseline() { return ""; },
           set textBaseline(_v: unknown) {},
+          _setSize(w: number, h: number) { _w = w; _h = h; },
         };
         return () => ctx;
       })();
@@ -42,6 +46,18 @@ afterEach(() => {
     }
     return el;
   };
+}
+
+// jsdom doesn't provide createImageBitmap; provide a stub.
+if (typeof globalThis.createImageBitmap === "undefined") {
+  globalThis.createImageBitmap = async (_source: unknown) =>
+    ({ width: 1, height: 1, close: () => {} }) as ImageBitmap;
+}
+
+// jsdom doesn't provide URL.createObjectURL / revokeObjectURL.
+if (typeof URL.createObjectURL === "undefined") {
+  URL.createObjectURL = (_blob: Blob) => "blob:mock-url";
+  URL.revokeObjectURL = (_url: string) => {};
 }
 
 // jsdom doesn't ship ImageData; provide a minimal polyfill for canvas tests.

@@ -5,7 +5,10 @@ import path from "node:path";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+      "@ionic/react": path.resolve(__dirname, "./src/__mocks__/@ionic/react.tsx"),
+    },
   },
   test: {
     globals: true,
