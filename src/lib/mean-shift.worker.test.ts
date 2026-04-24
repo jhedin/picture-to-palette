@@ -23,15 +23,23 @@ function buildSyntheticImageData(): ImageData {
 
 describe("extractPalette (worker payload function)", () => {
   it("extracts ~3 clusters from a 3-stripe image", () => {
-    const out = extractPalette(buildSyntheticImageData());
-    expect(out.length).toBeGreaterThanOrEqual(3);
-    expect(out.length).toBeLessThanOrEqual(5);
-    expect(out.every((hex) => /^#[0-9A-F]{6}$/.test(hex))).toBe(true);
+    const { hexes } = extractPalette(buildSyntheticImageData());
+    expect(hexes.length).toBeGreaterThanOrEqual(3);
+    expect(hexes.length).toBeLessThanOrEqual(5);
+    expect(hexes.every((hex) => /^#[0-9A-F]{6}$/.test(hex))).toBe(true);
   });
   it("returns hex strings normalized via normalizeHex", () => {
-    const out = extractPalette(buildSyntheticImageData());
-    for (const hex of out) {
+    const { hexes } = extractPalette(buildSyntheticImageData());
+    for (const hex of hexes) {
       expect(hex).toMatch(/^#[0-9A-F]{6}$/);
     }
+  });
+  it("returns debug data with correct dimensions and cluster sizes", () => {
+    const { debug, hexes } = extractPalette(buildSyntheticImageData());
+    expect(debug.segWidth).toBeGreaterThan(0);
+    expect(debug.segHeight).toBeGreaterThan(0);
+    expect(debug.segPixels.length).toBe(debug.segWidth * debug.segHeight * 4);
+    expect(debug.clusterSizes.length).toBe(hexes.length);
+    expect(debug.bandwidth).toBeGreaterThan(0);
   });
 });

@@ -1,6 +1,19 @@
 import { meanShift, estimateBandwidth, type Point3 } from "./mean-shift";
 import { hexToOklab, oklabToHex } from "./color";
 
+export interface DebugData {
+  segPixels: Uint8ClampedArray;
+  segWidth: number;
+  segHeight: number;
+  clusterSizes: number[];
+  bandwidth: number;
+}
+
+export interface ExtractResult {
+  hexes: string[];
+  debug: DebugData;
+}
+
 export interface ExtractRequest {
   type: "extract";
   imageData: ImageData;
@@ -9,6 +22,7 @@ export interface ExtractRequest {
 export interface ExtractResponse {
   type: "result";
   hexes: string[];
+  debug: DebugData;
 }
 
 const TARGET_DIM = 128;
@@ -36,7 +50,20 @@ function downsample(src: ImageData): ImageData {
   return new ImageData(out, w, h);
 }
 
-export function extractPalette(image: ImageData): string[] {
+function nearestCluster(point: Point3, clusters: Point3[]): number {
+  let nearest = 0;
+  let minD = Infinity;
+  for (let j = 0; j < clusters.length; j++) {
+    const dx = point[0] - clusters[j][0];
+    const dy = point[1] - clusters[j][1];
+    const dz = point[2] - clusters[j][2];
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d < minD) { minD = d; nearest = j; }
+  }
+  return nearest;
+}
+
+export function extractPalette(image: ImageData): ExtractResult {
   const small = downsample(image);
   const points: Point3[] = [];
   for (let i = 0; i < small.data.length; i += 4) {
@@ -47,10 +74,32 @@ export function extractPalette(image: ImageData): string[] {
     const lab = hexToOklab(hex);
     points.push([lab.L, lab.a, lab.b]);
   }
-  if (points.length === 0) return [];
-  const bandwidth = Math.max(0.05, estimateBandwidth(points, 0.2));
+  if (points.length === 0) {
+    return {
+      hexes: [],
+      debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: 0 },
+    };
+  }
+  // quantile=0.05 → k=10 nearest neighbours, giving within-cluster spread.
+  // Cap at 0.10 so no two visually-distinct colours ever merge.
+  const bandwidth = Math.max(0.05, Math.min(0.10, estimateBandwidth(points, 0.05)));
   const clusters = meanShift(points, { bandwidth, minBinFreq: 3 });
-  return clusters.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
+  const hexes = clusters.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
+
+  // Build per-pixel segmentation image
+  const clusterSizes = new Array<number>(clusters.length).fill(0);
+  const segPixels = new Uint8ClampedArray(small.data.length);
+  for (let i = 0; i < points.length; i++) {
+    const ci = nearestCluster(points[i], clusters);
+    clusterSizes[ci]++;
+    const hex = hexes[ci];
+    segPixels[i * 4] = parseInt(hex.slice(1, 3), 16);
+    segPixels[i * 4 + 1] = parseInt(hex.slice(3, 5), 16);
+    segPixels[i * 4 + 2] = parseInt(hex.slice(5, 7), 16);
+    segPixels[i * 4 + 3] = 255;
+  }
+
+  return { hexes, debug: { segPixels, segWidth: small.width, segHeight: small.height, clusterSizes, bandwidth } };
 }
 
 // Web Worker entrypoint (only registers when running in a worker context).
@@ -58,8 +107,8 @@ if (typeof self !== "undefined" && typeof (self as unknown as Worker).postMessag
   const workerSelf = self as unknown as Worker;
   workerSelf.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
     if (e.data?.type === "extract") {
-      const hexes = extractPalette(e.data.imageData);
-      const response: ExtractResponse = { type: "result", hexes };
+      const result = extractPalette(e.data.imageData);
+      const response: ExtractResponse = { type: "result", ...result };
       workerSelf.postMessage(response);
     }
   });
