@@ -240,13 +240,24 @@ export default function Capture() {
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                   <input
                     type="checkbox"
+                    checked={options.excludeBorder}
+                    onChange={(e) => setOptions((o) => ({ ...o, excludeBorder: e.target.checked }))}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Remove border segments (SLIC)</span>
+                </label>
+                <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
+                  Excludes segments that touch the image edge — quick and safe for plain backgrounds
+                </p>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
                     checked={options.subtractBackground}
                     onChange={(e) => setOptions((o) => ({ ...o, subtractBackground: e.target.checked }))}
                   />
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>Remove background colour</span>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Remove background (MBD propagation)</span>
                 </label>
                 <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
-                  Uses Minimum Barrier Distance from border segments to strip background inward
+                  Propagates background removal inward via Minimum Barrier Distance — handles interior background gaps
                 </p>
                 <ExtractionSlider
                   label="Merge brightness sensitivity"
@@ -366,7 +377,7 @@ export default function Capture() {
           isOpen={status === "error"}
           message={errorMsg ?? ""}
           duration={3000}
-          onDidDismiss={() => setStatus("idle")}
+          onDidDismiss={() => setStatus(imageDataRef.current ? "cropping" : "idle")}
         />
       </IonContent>
     </IonPage>

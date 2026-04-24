@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Plugin } from "vite";
 
 export default defineConfig({
+  define: { __GIT_SHA__: JSON.stringify("test") },
   // Cast needed: vitest bundles its own vite, causing a Plugin type mismatch.
   plugins: [react() as unknown as Plugin],
   resolve: {

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  IonBackButton,
   IonButton,
+  IonButtons,
   IonContent,
   IonHeader,
   IonPage,
@@ -144,6 +146,9 @@ export default function Gradients() {
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          <IonButtons slot="start">
+            <IonBackButton defaultHref="/palette" text="Palette" />
+          </IonButtons>
           <IonTitle>Gradient</IonTitle>
         </IonToolbar>
       </IonHeader>
@@ -186,6 +191,8 @@ export default function Gradients() {
               min={1}
               max={SHADE_MAX_STEPS}
               step={1}
+              snaps={true}
+              ticks={true}
               value={count}
               onIonChange={(e) => setCount(e.detail.value as number)}
             />
@@ -207,6 +214,8 @@ export default function Gradients() {
               min={1}
               max={inbetween.length}
               step={1}
+              snaps={true}
+              ticks={true}
               value={count}
               onIonChange={(e) => setCount(e.detail.value as number)}
             />
@@ -215,7 +224,10 @@ export default function Gradients() {
 
         {!isShadeMode && inbetween.length === 0 && (
           <IonText>
-            <p style={{ margin: "0 0 8px" }}>No palette colours fall between these anchors.</p>
+            <p style={{ margin: "0 0 8px" }}>
+              No palette colours fall between these anchors
+              {mode === "hue" ? " — try Natural or Lightness mode, or pick anchors with a wider hue gap" : ""}.
+            </p>
           </IonText>
         )}
 

@@ -205,16 +205,22 @@ describe("subtractBackground option", () => {
     expect(Math.abs(withSub.length - withoutSub.length)).toBeLessThanOrEqual(1);
   });
 
-  it("debug segPixels is populated and border pixels are darkened", () => {
-    // Use subtractBackground=false so we definitely get foreground colours.
+  it("debug segPixels shows excluded segments dark and included segments in colour", () => {
     const img = buildBorderMatchingInteriorImage();
-    const { debug } = extractPalette(img, undefined, { subtractBackground: false });
-    expect(debug.segPixels.length).toBeGreaterThan(0);
-    // Top-left corner is grey border → should be rendered at ≤50 (200>>2=50).
-    const r0 = debug.segPixels[0];
-    expect(typeof r0).toBe("number");
-    expect(r0).toBeLessThanOrEqual(50);
-    expect(r0).toBeGreaterThan(0);
+
+    // subtractBackground=false: nothing excluded → border pixel shown in its
+    // extracted palette colour (full brightness, not ≤50).
+    const { debug: debugOff } = extractPalette(img, undefined, { subtractBackground: false });
+    expect(debugOff.segPixels.length).toBeGreaterThan(0);
+    const r0Off = debugOff.segPixels[0];
+    expect(r0Off).toBeGreaterThan(50); // included → shown in colour, not dark
+
+    // subtractBackground=true: grey border segment IS excluded → shown dark (≤50).
+    const { debug: debugOn } = extractPalette(img, undefined, { subtractBackground: true });
+    expect(debugOn.segPixels.length).toBeGreaterThan(0);
+    const r0On = debugOn.segPixels[0];
+    expect(r0On).toBeLessThanOrEqual(50);
+    expect(r0On).toBeGreaterThan(0);
   });
 
   it("returns only valid hex strings regardless of option value", () => {

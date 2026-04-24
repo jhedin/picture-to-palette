@@ -59,6 +59,10 @@ export interface ExtractionOptions {
   segBandwidthCap: number;    // default 0.10
   mergeBandwidth: number;     // default 0.08
   minSegmentFrac: number;     // default 0
+  /** Exclude only the SLIC border-seed segments from extraction — lighter than
+   *  subtractBackground (no MBD propagation).  Useful for simple shots where
+   *  the background is a plain surface touching the image edge. */
+  excludeBorder: boolean;       // default false
   subtractBackground: boolean; // default false
   kuwahara: boolean;           // default false — flatten texture before SLIC
   /** L-axis weight for the second-level merge (0–1).
@@ -75,6 +79,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   segBandwidthCap: 0.10,
   mergeBandwidth: 0.08,
   minSegmentFrac: 0,
+  excludeBorder: false,
   subtractBackground: false,
   kuwahara: false,
   mergeL: 1.0,
@@ -192,7 +197,7 @@ export function extractPalette(
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
 ): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground, kuwahara, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
+  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, excludeBorder, subtractBackground, kuwahara, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const capped = capSize(source);
   const sized = kuwahara ? kuwaharaFilter(capped) : capped;
@@ -232,7 +237,7 @@ export function extractPalette(
   // problem (SLIC seeds eating border pixels) and correctly handles interior gaps.
   // Only seed from border labels when the caller has opted in — otherwise
   // Phase 2 must include ALL segments regardless of border touching.
-  const extendedBgLabels = new Set<number>(subtractBackground ? backgroundLabels : []);
+  const extendedBgLabels = new Set<number>((subtractBackground || excludeBorder) ? backgroundLabels : []);
 
   if (subtractBackground && backgroundLabels.size > 0) {
     const adj = buildAdjacency(labels, W, H, numSeg);
@@ -252,13 +257,17 @@ export function extractPalette(
     // Near-achromatic segments (noise, neutral labels) are always removed by MBD.
     const MBD_THRESHOLD = 0.15;
     const HUE_THRESHOLD = 35 * (Math.PI / 180); // 35° in radians
-    const ACHROMATIC_C = 0.025; // below this chroma, hue is unreliable
+    const ACHROMATIC_C = 0.05; // below this chroma, treat bg as achromatic
+    // For achromatic backgrounds, only remove segments within this lightness
+    // band.  Prevents MBD from propagating through boundary segments into
+    // foreground colours that differ significantly in brightness from the bg.
+    const ACHROMATIC_L_TOL = 0.20;
 
     for (let si = 0; si < numSeg; si++) {
       if (!backgroundLabels.has(si) && mbd[si] < MBD_THRESHOLD) {
         let remove = true;
+        const [sL, sA, sB] = slicPoints[si];
         if (bgChroma >= ACHROMATIC_C) {
-          const [, sA, sB] = slicPoints[si];
           const segC = Math.sqrt(sA * sA + sB * sB);
           if (segC >= ACHROMATIC_C) {
             // Both bg and segment are chromatic — only remove if hue is similar.
@@ -268,6 +277,9 @@ export function extractPalette(
             ));
             if (hueDiff >= HUE_THRESHOLD) remove = false;
           }
+        } else {
+          // Achromatic background: only remove segments with similar lightness.
+          if (Math.abs(sL - bgL) > ACHROMATIC_L_TOL) remove = false;
         }
         if (remove) extendedBgLabels.add(si);
       }
@@ -316,10 +328,6 @@ export function extractPalette(
   }
 
   const avgBw = bwCount > 0 ? totalBw / bwCount : 0.07;
-
-  if (allCenters.length === 0) {
-    return { hexes: [], debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: avgBw } };
-  }
 
   // Phase 4 — greedy dedup in 3D OKLab.
   const BASE_DEDUP = 0.08;
@@ -375,25 +383,25 @@ export function extractPalette(
   const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
   // Phase 5 — build segmentation debug image.
-  //   Border-touching background   → 25% brightness (very dark)
-  //   Back-projection extended bg  → 50% brightness (medium dark)
-  //   Foreground                   → coloured by palette cluster
+  //   Excluded segments (extendedBgLabels, which includes border seeds when
+  //   excludeBorder/subtractBackground is on, plus MBD-propagated):
+  //     border seeds     → 25% brightness
+  //     MBD-only removal → 50% brightness
+  //   All included segments → coloured by their assigned palette cluster.
+  //   When neither excludeBorder nor subtractBackground is on, extendedBgLabels
+  //   is empty so every segment is shown in its extracted colour.
   const clusterSizes = new Array<number>(unique.length).fill(0);
   const segPixels = new Uint8ClampedArray(sized.data.length);
   for (let i = 0; i < N; i++) {
     const si = labels[i];
-    if (backgroundLabels.has(si)) {
-      segPixels[i * 4]     = sized.data[i * 4] >> 2;
-      segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> 2;
-      segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> 2;
+    if (extendedBgLabels.has(si)) {
+      // Show excluded segments dark; border seeds darker than MBD-only removals.
+      const shift = backgroundLabels.has(si) ? 2 : 1;
+      segPixels[i * 4]     = sized.data[i * 4] >> shift;
+      segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> shift;
+      segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> shift;
       segPixels[i * 4 + 3] = 255;
-    } else if (extendedBgLabels.has(si)) {
-      // Back-projection identified segment — shown at 50% so user can see what was removed.
-      segPixels[i * 4]     = sized.data[i * 4] >> 1;
-      segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> 1;
-      segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> 1;
-      segPixels[i * 4 + 3] = 255;
-    } else {
+    } else if (unique.length > 0) {
       const rep = segRepCenter[si] ?? labPoints[i];
       const ci = nearestCluster(rep, unique);
       clusterSizes[ci]++;
@@ -401,6 +409,12 @@ export function extractPalette(
       segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);
       segPixels[i * 4 + 1] = parseInt(hex.slice(3, 5), 16);
       segPixels[i * 4 + 2] = parseInt(hex.slice(5, 7), 16);
+      segPixels[i * 4 + 3] = 255;
+    } else {
+      // No palette clusters (all segments excluded) — show original pixel.
+      segPixels[i * 4]     = sized.data[i * 4];
+      segPixels[i * 4 + 1] = sized.data[i * 4 + 1];
+      segPixels[i * 4 + 2] = sized.data[i * 4 + 2];
       segPixels[i * 4 + 3] = 255;
     }
   }
