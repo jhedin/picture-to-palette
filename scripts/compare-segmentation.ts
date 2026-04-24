@@ -44,18 +44,14 @@ function savePng(segPixels: Uint8ClampedArray, w: number, h: number, name: strin
 }
 
 const METHODS: Array<{ method: SegmentMethod; label: string; opts?: object }> = [
-  { method: "slic",              label: "1-slic" },
-  { method: "slic",              label: "1-slic-blur1.5",               opts: { preBlurSigma: 1.5 } },
-  { method: "slic",              label: "1-slic-rag0.10",               opts: { ragMergeThreshold: 0.10 } },
-  { method: "felzenszwalb",      label: "2-felzenszwalb-k500" },
-  { method: "felzenszwalb",      label: "2-felzenszwalb-k500-blur1.0",  opts: { preBlurSigma: 1.0 } },
-  { method: "felzenszwalb",      label: "2-felzenszwalb-k500-blur2.0",  opts: { preBlurSigma: 2.0 } },
-  { method: "felzenszwalb",      label: "2-felzenszwalb-k200",          opts: { fhK: 200, fhMinSize: 200 } },
-  { method: "felzenszwalb",      label: "2-felzenszwalb-k200-blur1.5",  opts: { fhK: 200, fhMinSize: 200, preBlurSigma: 1.5 } },
-  { method: "spatial-meanshift", label: "3-spatial-meanshift" },
-  { method: "spatial-meanshift", label: "3-spatial-meanshift-blur1.5",  opts: { preBlurSigma: 1.5 } },
-  { method: "spatial-kmeans",    label: "4-spatial-kmeans-k20" },
-  { method: "spatial-kmeans",    label: "4-spatial-kmeans-k20-blur1.5", opts: { preBlurSigma: 1.5 } },
+  { method: "felzenszwalb", label: "fz-k200" ,                opts: { fhK: 200, fhMinSize: 200 } },
+  { method: "felzenszwalb", label: "fz-k200-blur0.5",         opts: { fhK: 200, fhMinSize: 200, preBlurSigma: 0.5 } },
+  { method: "felzenszwalb", label: "fz-k200-blur0.75",        opts: { fhK: 200, fhMinSize: 200, preBlurSigma: 0.75 } },
+  { method: "felzenszwalb", label: "fz-k200-blur1.0",         opts: { fhK: 200, fhMinSize: 200, preBlurSigma: 1.0 } },
+  { method: "spatial-meanshift", label: "ms-blur0.5",         opts: { preBlurSigma: 0.5 } },
+  { method: "spatial-meanshift", label: "ms-blur0.75",        opts: { preBlurSigma: 0.75 } },
+  { method: "spatial-meanshift", label: "ms-blur1.0",         opts: { preBlurSigma: 1.0 } },
+  { method: "spatial-meanshift", label: "ms-blur1.5",         opts: { preBlurSigma: 1.5 } },
 ];
 
 const image = loadJpeg("yarn-cubbies.jpg");
