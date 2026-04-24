@@ -10,6 +10,14 @@ export interface DebugData {
   bandwidth: number;
 }
 
+/** Normalised crop rectangle (all values 0–1, relative to original image). */
+export interface CropBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ExtractResult {
   hexes: string[];
   debug: DebugData;
@@ -18,12 +26,65 @@ export interface ExtractResult {
 export interface ExtractRequest {
   type: "extract";
   imageData: ImageData;
+  cropRegion?: CropBox;
 }
 
 export interface ExtractResponse {
   type: "result";
   hexes: string[];
   debug: DebugData;
+}
+
+/** Crop an ImageData to the given normalised box. */
+function cropImageData(src: ImageData, box: CropBox): ImageData {
+  const sx = Math.round(box.x * src.width);
+  const sy = Math.round(box.y * src.height);
+  const sw = Math.max(1, Math.round(box.w * src.width));
+  const sh = Math.max(1, Math.round(box.h * src.height));
+  const out = new Uint8ClampedArray(sw * sh * 4);
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const si = ((sy + y) * src.width + (sx + x)) * 4;
+      const di = (y * sw + x) * 4;
+      out[di] = src.data[si]; out[di + 1] = src.data[si + 1];
+      out[di + 2] = src.data[si + 2]; out[di + 3] = src.data[si + 3];
+    }
+  }
+  return new ImageData(out, sw, sh);
+}
+
+/** Compute the bounding box of non-background pixels, with a small padding. */
+function computeCropBox(labels: Int32Array, bg: Set<number>, W: number, H: number): CropBox {
+  let minX = W, minY = H, maxX = 0, maxY = 0, found = false;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!bg.has(labels[y * W + x])) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        found = true;
+      }
+    }
+  }
+  if (!found) return { x: 0, y: 0, w: 1, h: 1 };
+  const PAD = 0.02;
+  const x = Math.max(0, minX / W - PAD);
+  const y = Math.max(0, minY / H - PAD);
+  const w = Math.min(1 - x, (maxX - minX + 1) / W + 2 * PAD);
+  const h = Math.min(1 - y, (maxY - minY + 1) / H + 2 * PAD);
+  return { x, y, w, h };
+}
+
+/**
+ * Quick SLIC pass to detect subject bounds and suggest a crop rectangle.
+ * Much faster than a full extraction — only runs SLIC, not mean-shift.
+ */
+export function suggestCrop(image: ImageData): CropBox {
+  if (image.width === 0 || image.height === 0) return { x: 0, y: 0, w: 1, h: 1 };
+  const sized = capSize(image);
+  const W = sized.width, H = sized.height;
+  const K = Math.max(10, Math.round((W * H) / 1500));
+  const { labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
+  return computeCropBox(labels, backgroundLabels, W, H);
 }
 
 // Performance cap for SLIC.  256 px gives ~33 segments on a typical photo;
@@ -63,8 +124,9 @@ function nearestCluster(point: Point3, clusters: Point3[]): number {
   return nearest;
 }
 
-export function extractPalette(image: ImageData): ExtractResult {
-  const sized = capSize(image);
+export function extractPalette(image: ImageData, cropRegion?: CropBox): ExtractResult {
+  const source = cropRegion ? cropImageData(image, cropRegion) : image;
+  const sized = capSize(source);
   const W = sized.width, H = sized.height, N = W * H;
 
   // Pre-convert all pixels to OKLab once (SLIC and mean-shift both need it).
@@ -187,7 +249,7 @@ if (typeof self !== "undefined" && typeof (self as unknown as Worker).postMessag
   const workerSelf = self as unknown as Worker;
   workerSelf.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
     if (e.data?.type === "extract") {
-      const result = extractPalette(e.data.imageData);
+      const result = extractPalette(e.data.imageData, e.data.cropRegion);
       const response: ExtractResponse = { type: "result", ...result };
       workerSelf.postMessage(response);
     }
