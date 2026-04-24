@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  IonBackButton,
   IonButton,
+  IonButtons,
   IonContent,
   IonHeader,
   IonPage,
@@ -21,7 +23,6 @@ export default function Capture() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  // Raw ImageData kept so we can re-crop without re-reading the file.
   const imageDataRef = useRef<ImageData | null>(null);
   const [cropBox, setCropBox] = useState<CropBox>({ x: 0, y: 0, w: 1, h: 1 });
   const [candidates, setCandidates] = useState<string[]>([]);
@@ -69,7 +70,6 @@ export default function Capture() {
       const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
       imageDataRef.current = imageData;
 
-      // Quick SLIC pass to suggest a crop rectangle.
       const suggestion = suggestCrop(imageData);
       setCropBox(suggestion);
       setStatus("cropping");
@@ -103,8 +103,15 @@ export default function Capture() {
   }
 
   function addOne(hex: string) {
+    if (accepted.has(hex)) return;
     dispatch({ type: "ADD_COLOR", hex });
     setAccepted((prev) => new Set(prev).add(hex));
+  }
+
+  function removeAccepted(hex: string) {
+    const entry = state.colors.find((c) => c.hex === hex);
+    if (entry) dispatch({ type: "REMOVE_COLOR", id: entry.id });
+    setAccepted((prev) => { const next = new Set(prev); next.delete(hex); return next; });
   }
 
   function acceptAll() {
@@ -114,15 +121,35 @@ export default function Capture() {
     setAccepted(new Set(candidates));
   }
 
+  function clearUnselected() {
+    setCandidates(Array.from(accepted));
+  }
+
+  function clearAll() {
+    for (const hex of accepted) {
+      const entry = state.colors.find((c) => c.hex === hex);
+      if (entry) dispatch({ type: "REMOVE_COLOR", id: entry.id });
+    }
+    setCandidates([]);
+    setAccepted(new Set());
+  }
+
   const isCroppedSignificantly =
     cropBox.w < 0.95 || cropBox.h < 0.95 || cropBox.x > 0.02 || cropBox.y > 0.02;
 
   const totalSegPixels = debugData ? debugData.segWidth * debugData.segHeight : 1;
+  const unadded = candidates.filter((h) => !accepted.has(h));
+  const addedList = candidates.filter((h) => accepted.has(h));
 
   return (
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          {state.colors.length > 0 && (
+            <IonButtons slot="start">
+              <IonBackButton defaultHref="/palette" text="Palette" />
+            </IonButtons>
+          )}
           <IonTitle>Capture <span style={{ fontSize: 11, opacity: 0.5, fontWeight: 400 }}>({__GIT_SHA__})</span></IonTitle>
         </IonToolbar>
       </IonHeader>
@@ -148,8 +175,6 @@ export default function Capture() {
 
         {/* ── Photo + crop overlay ───────────────────────────────────────── */}
         {photoUrl && (
-          // Wrapper shrinks to actual rendered image size so the crop overlay
-          // exactly covers the image pixels, not the surrounding whitespace.
           <div style={{ position: "relative", display: "block", width: "fit-content", maxWidth: "100%", margin: "0 auto 12px" }}>
             <img
               src={photoUrl}
@@ -199,6 +224,7 @@ export default function Capture() {
                   hint="Low = keep shadows/highlights separate · High = collapse variants"
                   value={options.mergeBandwidth}
                   min={0.04} max={0.25} step={0.01}
+                  ticks={[0.04, 0.06, 0.08, 0.10, 0.15, 0.20, 0.25]}
                   format={(v) => v.toFixed(2)}
                   onChange={(v) => setOptions((o) => ({ ...o, mergeBandwidth: v }))}
                 />
@@ -207,6 +233,7 @@ export default function Capture() {
                   hint="Low = more sub-colours per region · High = one bold colour per region"
                   value={options.segBandwidthCap}
                   min={0.04} max={0.20} step={0.01}
+                  ticks={[0.04, 0.06, 0.08, 0.10, 0.14, 0.20]}
                   format={(v) => v.toFixed(2)}
                   onChange={(v) => setOptions((o) => ({ ...o, segBandwidthCap: v }))}
                 />
@@ -215,6 +242,7 @@ export default function Capture() {
                   hint="Small = fine spatial detail · Large = broad areas, ignores small objects"
                   value={options.segmentSize}
                   min={300} max={5000} step={100}
+                  ticks={[300, 500, 1000, 1500, 2000, 3000, 5000]}
                   format={(v) => `${v} px`}
                   onChange={(v) => setOptions((o) => ({ ...o, segmentSize: v }))}
                 />
@@ -223,6 +251,7 @@ export default function Capture() {
                   hint="Skip regions under this fraction of the target region size — filters labels, glints, slivers. 0 = off"
                   value={options.minSegmentFrac}
                   min={0} max={1.0} step={0.05}
+                  ticks={[0, 0.25, 0.5, 0.75, 1.0]}
                   format={(v) => v === 0 ? "off" : `×${v.toFixed(2)}`}
                   onChange={(v) => setOptions((o) => ({ ...o, minSegmentFrac: v }))}
                 />
@@ -264,16 +293,18 @@ export default function Capture() {
                   hint="1 = standard 3D merge · 0.2 = collapse shadows/highlights of same hue · 0 = hue-only (chroma plane)"
                   value={options.mergeL}
                   min={0} max={1.0} step={0.05}
+                  ticks={[0, 0.2, 0.5, 1.0]}
                   format={(v) => v === 1 ? "full" : v === 0 ? "hue only" : v.toFixed(2)}
                   onChange={(v) => setOptions((o) => ({ ...o, mergeL: v }))}
                 />
-                <button
-                  type="button"
+                <IonButton
+                  fill="outline"
+                  size="small"
                   onClick={() => setOptions({ ...DEFAULT_OPTIONS })}
-                  style={{ background: "none", border: "none", color: "var(--ion-color-medium)", fontSize: 11, cursor: "pointer", padding: 0, textAlign: "left" }}
+                  style={{ alignSelf: "flex-start" }}
                 >
                   Reset to defaults
-                </button>
+                </IonButton>
               </div>
             )}
           </>
@@ -282,54 +313,118 @@ export default function Capture() {
         {/* ── Palette chips ─────────────────────────────────────────────── */}
         {status === "ready" && (
           <>
-            <IonText>
-              <p>
-                Tap a swatch to add it to your palette. Already added:{" "}
-                {accepted.size} / {candidates.length}.
-              </p>
-            </IonText>
+            {/* Found colors */}
+            <SectionLabel>Found in this crop</SectionLabel>
+            {unadded.length === 0 ? (
+              <IonText color="medium">
+                <p style={{ margin: "0 0 12px", fontSize: 13 }}>All found colors have been added.</p>
+              </IonText>
+            ) : (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {unadded.map((hex) => {
+                  const extIdx = lastHexes.indexOf(hex);
+                  const pct =
+                    showDebug && debugData && extIdx >= 0
+                      ? Math.round((debugData.clusterSizes[extIdx] / totalSegPixels) * 100)
+                      : null;
+                  return (
+                    <div key={hex} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                      <button
+                        type="button"
+                        aria-label={`Add color ${hex}`}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("text/plain", hex)}
+                        onClick={() => addOne(hex)}
+                        style={{
+                          width: 52, height: 52, borderRadius: "50%", background: hex,
+                          border: "2px solid rgba(0,0,0,0.15)",
+                          cursor: "grab",
+                        }}
+                      />
+                      {pct !== null && (
+                        <span style={{ fontSize: 10, color: "var(--ion-color-medium)" }}>{pct}%</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
-              {candidates.map((hex) => {
-                const isAdded = accepted.has(hex);
-                const extIdx = lastHexes.indexOf(hex);
-                const pct =
-                  showDebug && debugData && extIdx >= 0
-                    ? Math.round((debugData.clusterSizes[extIdx] / totalSegPixels) * 100)
-                    : null;
-                return (
-                  <div key={hex} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                    <button
-                      type="button"
-                      aria-label={isAdded ? `Added color ${hex}` : `Add color ${hex}`}
-                      onClick={() => !isAdded && addOne(hex)}
-                      disabled={isAdded}
-                      style={{
-                        width: 56, height: 56, borderRadius: "50%", background: hex,
-                        border: isAdded ? "3px solid var(--ion-color-primary)" : "2px solid rgba(0,0,0,0.15)",
-                        cursor: isAdded ? "default" : "pointer",
-                      }}
-                    />
-                    {pct !== null && (
-                      <span style={{ fontSize: 10, color: "var(--ion-color-medium)" }}>{pct}%</span>
-                    )}
-                  </div>
-                );
-              })}
+            {/* Accepted / drop zone */}
+            <SectionLabel>Your palette — tap to add, drag here</SectionLabel>
+            <div
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const hex = e.dataTransfer.getData("text/plain");
+                if (hex) addOne(hex);
+              }}
+              style={{
+                minHeight: 68,
+                borderRadius: 10,
+                border: "2px dashed var(--ion-color-primary-tint, #a0c4ff)",
+                padding: "8px 10px",
+                marginBottom: 12,
+              }}
+            >
+              {addedList.length === 0 ? (
+                <IonText color="medium">
+                  <p style={{ margin: 0, fontSize: 13 }}>Tap a color above to add it here, or drag it in.</p>
+                </IonText>
+              ) : (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {addedList.map((hex) => (
+                    <div key={hex} style={{ position: "relative" }}>
+                      <div
+                        style={{
+                          width: 52, height: 52, borderRadius: "50%", background: hex,
+                          border: "2px solid var(--ion-color-primary)",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Remove color ${hex}`}
+                        onClick={() => removeAccepted(hex)}
+                        style={{
+                          position: "absolute", top: -3, right: -3,
+                          width: 20, height: 20, borderRadius: "50%",
+                          background: "var(--ion-background-color, #fff)",
+                          border: "1px solid rgba(0,0,0,0.25)",
+                          cursor: "pointer", padding: 0,
+                          fontSize: 14, lineHeight: "18px", textAlign: "center",
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
+            {/* Action row */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
               <IonButton
                 onClick={acceptAll}
-                disabled={candidates.every((h) => accepted.has(h))}
+                disabled={unadded.length === 0}
               >
                 Accept all
               </IonButton>
+              {unadded.length > 0 && (
+                <IonButton fill="outline" onClick={clearUnselected}>
+                  Clear found
+                </IonButton>
+              )}
+              {candidates.length > 0 && (
+                <IonButton fill="outline" color="danger" onClick={clearAll}>
+                  Clear all
+                </IonButton>
+              )}
+              <IonButton fill="outline" onClick={() => { setStatus("cropping"); }}>
+                Re-crop
+              </IonButton>
               <IonButton onClick={() => inputRef.current?.click()} fill="outline">
                 Add another photo
-              </IonButton>
-              <IonButton fill="outline" onClick={() => { setStatus("cropping"); }}>
-                Adjust crop
               </IonButton>
             </div>
 
@@ -384,6 +479,14 @@ export default function Capture() {
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p style={{ margin: "0 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+      {children}
+    </p>
+  );
+}
+
 interface SliderProps {
   label: string;
   hint: string;
@@ -391,11 +494,13 @@ interface SliderProps {
   min: number;
   max: number;
   step: number;
+  ticks?: number[];
   format: (v: number) => string;
   onChange: (v: number) => void;
 }
 
-function ExtractionSlider({ label, hint, value, min, max, step, format, onChange }: SliderProps) {
+function ExtractionSlider({ label, hint, value, min, max, step, ticks, format, onChange }: SliderProps) {
+  const listId = `ticks-${label.replace(/\s+/g, "-").toLowerCase()}`;
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
@@ -408,9 +513,15 @@ function ExtractionSlider({ label, hint, value, min, max, step, format, onChange
         type="range"
         min={min} max={max} step={step}
         value={value}
+        list={ticks ? listId : undefined}
         onChange={(e) => onChange(Number(e.target.value))}
         style={{ width: "100%", margin: "2px 0" }}
       />
+      {ticks && (
+        <datalist id={listId}>
+          {ticks.map((t) => <option key={t} value={t} />)}
+        </datalist>
+      )}
       <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: 0 }}>{hint}</p>
     </div>
   );

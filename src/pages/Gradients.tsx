@@ -176,14 +176,21 @@ export default function Gradients() {
           ))}
         </div>
 
-        {/* Shade mode: steps-per-side slider */}
+        {/* Shade mode: explanation + steps-per-side slider */}
         {isShadeMode && (
           <div style={{ marginBottom: 12 }}>
+            <IonText color="medium">
+              <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                Shade mode finds darker and lighter variants of your chosen midtone from your palette.
+                The midtone is marked with a white outline in the strip below.
+                Use the slider to control how many shadow/highlight steps to show on each side.
+              </p>
+            </IonText>
             <IonText>
               <p style={{ margin: "0 0 4px", fontSize: 13 }}>
                 Steps per side: {count}
                 {shadeResult && (shadeResult.shadows.length < count || shadeResult.highlights.length < count)
-                  ? " (palette limited)"
+                  ? " (palette limited — add more shades to get more steps)"
                   : ""}
               </p>
             </IonText>
