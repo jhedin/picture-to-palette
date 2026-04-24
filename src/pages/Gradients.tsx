@@ -11,12 +11,13 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
-import { gradientBetween } from "../lib/color";
+import { gradientBetween, type GradientMode } from "../lib/color";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
+  const [mode, setMode] = useState<GradientMode>("natural");
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const anchorA = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
@@ -28,8 +29,8 @@ export default function Gradients() {
   // are included — colours that fall outside the A–B segment are excluded.
   const inbetween = useMemo(() => {
     if (!anchorA || !anchorB) return [];
-    return gradientBetween(paletteHexes, anchorA, anchorB);
-  }, [anchorA, anchorB, paletteHexes]);
+    return gradientBetween(paletteHexes, anchorA, anchorB, mode);
+  }, [anchorA, anchorB, paletteHexes, mode]);
 
   const gradient = useMemo(
     () => (anchorA && anchorB ? [anchorA, ...inbetween, anchorB] : []),
@@ -82,8 +83,31 @@ export default function Gradients() {
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+        {/* Mode selector */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          {(["natural", "lightness", "saturation", "hue"] as GradientMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              style={{
+                padding: "4px 12px",
+                borderRadius: 20,
+                border: "1px solid var(--ion-color-primary)",
+                background: mode === m ? "var(--ion-color-primary)" : "transparent",
+                color: mode === m ? "var(--ion-color-primary-contrast)" : "var(--ion-color-primary)",
+                fontSize: 13,
+                cursor: "pointer",
+                textTransform: "capitalize",
+              }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
         <IonText>
-          <p>
+          <p style={{ margin: "0 0 8px" }}>
             {inbetween.length > 0
               ? `${inbetween.length} colour${inbetween.length !== 1 ? "s" : ""} between your anchors.`
               : "No palette colours fall between these anchors."}

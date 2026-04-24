@@ -62,20 +62,25 @@ export function dedupByDeltaE(hexes: string[], threshold: number): string[] {
   return out;
 }
 
+export type GradientMode = "natural" | "lightness" | "saturation" | "hue";
+
 /**
  * Given two anchor colours, find which palette colours fall *between* them
  * along the A→B line in OKLab space (projection t strictly in (0, 1)),
- * sorted from A toward B.
+ * then sort the filtered set according to `mode`:
+ *
+ *   natural    — sort by position along the OKLab A→B vector (default)
+ *   lightness  — sort by L, ascending from A's lightness toward B's
+ *   saturation — sort by OKLCH chroma C, ascending from A's toward B's
+ *   hue        — sort by hue angle, taking the shorter arc from A to B
  *
  * The full gradient sequence is: [anchorA, ...gradientBetween(...), anchorB]
- *
- * Only colours that are genuinely intermediate are returned — colours that
- * project outside the A–B segment (before A or past B) are excluded.
  */
 export function gradientBetween(
   palette: string[],
   anchorA: string,
   anchorB: string,
+  mode: GradientMode = "natural",
 ): string[] {
   const a = hexToOklab(anchorA);
   const b = hexToOklab(anchorB);
@@ -86,16 +91,46 @@ export function gradientBetween(
   const normA = normalizeHex(anchorA);
   const normB = normalizeHex(anchorB);
 
-  return palette
+  // Filter: only colours whose OKLab projection lands strictly between A and B.
+  const candidates = palette
     .map(normalizeHex)
     .filter((h): h is string => h !== null && h !== normA && h !== normB)
     .map((hex) => {
-      const p = hexToOklab(hex);
-      const ap = { L: p.L - a.L, a: p.a - a.a, b: p.b - a.b };
+      const lab = hexToOklab(hex);
+      const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
       const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-      return { hex, t };
+      return { hex, t, lab };
     })
-    .filter(({ t }) => t > 0 && t < 1)   // strictly between the anchors
-    .sort((x, y) => x.t - y.t)
-    .map(({ hex }) => hex);
+    .filter(({ t }) => t > 0 && t < 1);
+
+  // Sort according to mode.
+  if (mode === "natural") {
+    candidates.sort((x, y) => x.t - y.t);
+
+  } else if (mode === "lightness") {
+    const asc = a.L <= b.L;
+    candidates.sort((x, y) => asc ? x.lab.L - y.lab.L : y.lab.L - x.lab.L);
+
+  } else if (mode === "saturation") {
+    const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+    const asc = chromaOf(a) <= chromaOf(b);
+    candidates.sort((x, y) =>
+      asc ? chromaOf(x.lab) - chromaOf(y.lab) : chromaOf(y.lab) - chromaOf(x.lab),
+    );
+
+  } else if (mode === "hue") {
+    const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
+    const hA = hueOf(a);
+    const hB = hueOf(b);
+    // Signed angular difference hA→hB on the shorter arc (−180..180).
+    const diff = ((hB - hA + 540) % 360) - 180;
+    candidates.sort((x, y) => {
+      // Project each hue onto the arc from hA in the direction of diff.
+      const tx = ((hueOf(x.lab) - hA) * Math.sign(diff) + 720) % 360;
+      const ty = ((hueOf(y.lab) - hA) * Math.sign(diff) + 720) % 360;
+      return tx - ty;
+    });
+  }
+
+  return candidates.map(({ hex }) => hex);
 }
