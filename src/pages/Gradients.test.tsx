@@ -83,13 +83,9 @@ describe("Gradients page", () => {
   it("tapping an inbetween swatch moves it to the excluded row", async () => {
     // Red anchor, purple inbetween, blue anchor
     renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getAllByRole("button", { name: /^#/i }));
-    const swatches = screen.getAllByRole("button", { name: /^#/i });
-    // Find an inbetween swatch (not Save PNG, not mode buttons)
-    const inbetweenSwatch = swatches.find((el) =>
-      el.getAttribute("aria-label")?.startsWith("#") &&
-      !el.getAttribute("aria-label")?.includes(" "),
-    );
+    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
+    const swatches = screen.getAllByRole("button", { name: /gradient candidate/i });
+    const inbetweenSwatch = swatches[0];
     if (inbetweenSwatch) {
       await userEvent.click(inbetweenSwatch);
       await waitFor(() =>
@@ -100,12 +96,9 @@ describe("Gradients page", () => {
 
   it("tapping an excluded swatch restores it to the gradient", async () => {
     renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getAllByRole("button", { name: /^#/i }));
-    const swatches = screen.getAllByRole("button", { name: /^#/i });
-    const inbetweenSwatch = swatches.find((el) =>
-      el.getAttribute("aria-label")?.startsWith("#") &&
-      !el.getAttribute("aria-label")?.includes(" "),
-    );
+    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
+    const swatches = screen.getAllByRole("button", { name: /gradient candidate/i });
+    const inbetweenSwatch = swatches[0];
     if (inbetweenSwatch) {
       await userEvent.click(inbetweenSwatch);
       await waitFor(() => screen.getByText(/excluded/i));

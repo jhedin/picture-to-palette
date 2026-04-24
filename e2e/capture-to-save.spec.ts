@@ -46,7 +46,7 @@ test("full flow: capture → pick anchors → generate → save", async ({ page 
   await candidates.first().click();
 
   // Save and assert a download fired.
-  await page.getByRole("button", { name: /^save$/i }).click();
+  await page.getByRole("button", { name: /save png/i }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^palette-.+\.png$/);
 

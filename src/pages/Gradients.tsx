@@ -239,7 +239,7 @@ export default function Gradients() {
               <div
                 key={`${hex}-${i}`}
                 role={tappable ? "button" : undefined}
-                aria-label={tappable ? hex : undefined}
+                aria-label={tappable ? `gradient candidate ${hex}` : undefined}
                 data-outlier={isOutlier ? "true" : undefined}
                 onClick={tappable ? () => toggleExclude(hex) : undefined}
                 style={{
