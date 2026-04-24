@@ -52,17 +52,16 @@ export default function Gradients() {
     if (initial.length > 0) setSequence(initial);
   }, [state.anchorA, state.anchorB, state.colors]);
 
-  // Candidate lists between each consecutive pair of set-points.
-  const pairCandidates = useMemo(
-    () =>
-      sequence.slice(0, -1).map((hexA, i) => {
-        const hexB = sequence[i + 1];
-        return gradientBetween(colorSpace, hexA, hexB, mode).filter(
-          (h) => !sequence.includes(h),
-        );
-      }),
-    [sequence, colorSpace, mode],
-  );
+  // Candidates only for the currently open gap — O(colorSpace) instead of
+  // O(colorSpace × pairs) on every mode or sequence change.
+  const activeCandidates = useMemo(() => {
+    if (insertAt === null || insertAt < 1 || insertAt > sequence.length - 1) return [];
+    const hexA = sequence[insertAt - 1];
+    const hexB = sequence[insertAt];
+    return gradientBetween(colorSpace, hexA, hexB, mode).filter(
+      (h) => !sequence.includes(h),
+    );
+  }, [insertAt, sequence, colorSpace, mode]);
 
   const metas = useMemo(() => sequence.map(swatchMeta), [sequence]);
   const outlierMap = useMemo(() => {
@@ -312,7 +311,7 @@ export default function Gradients() {
               marginBottom: 12,
             }}
           >
-            {pairCandidates[insertAt - 1]?.length === 0 ? (
+            {activeCandidates.length === 0 ? (
               <IonText color="medium">
                 <p style={{ margin: 0, fontSize: 13 }}>
                   No {mode}-mode candidates between these two — try a different mode.
@@ -324,7 +323,7 @@ export default function Gradients() {
                   Fits here — tap to insert:
                 </p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {(pairCandidates[insertAt - 1] ?? []).slice(0, 8).map((hex) => {
+                  {activeCandidates.slice(0, 8).map((hex) => {
                     const dmcEntry = isDmcMode ? dmcSet.find((d) => d.hex === hex) : null;
                     return (
                       <button
