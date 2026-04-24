@@ -17,15 +17,22 @@ function dist(a: Point3, b: Point3): number {
 export function estimateBandwidth(points: Point3[], quantile = 0.3): number {
   if (points.length < 2) return 1;
   const sample = points.length > 200 ? sampleN(points, 200) : points;
-  const distances: number[] = [];
-  for (let i = 0; i < sample.length; i++) {
-    for (let j = i + 1; j < sample.length; j++) {
-      distances.push(dist(sample[i], sample[j]));
+  const n = sample.length;
+  // k-NN median: for each point find its k-th nearest neighbor, return median
+  // of those distances. This captures within-cluster spread rather than
+  // cross-cluster distances, so diverse images don't inflate the bandwidth.
+  const k = Math.max(1, Math.round(quantile * n));
+  const knnDists: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const dists: number[] = [];
+    for (let j = 0; j < n; j++) {
+      if (i !== j) dists.push(dist(sample[i], sample[j]));
     }
+    dists.sort((a, b) => a - b);
+    knnDists.push(dists[k - 1]);
   }
-  distances.sort((a, b) => a - b);
-  const idx = Math.max(0, Math.min(distances.length - 1, Math.floor(distances.length * quantile)));
-  return distances[idx];
+  knnDists.sort((a, b) => a - b);
+  return knnDists[Math.floor(knnDists.length / 2)];
 }
 
 function sampleN<T>(arr: T[], n: number): T[] {

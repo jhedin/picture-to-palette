@@ -6,7 +6,16 @@ import { PaletteProvider } from "../lib/palette-store";
 import Capture from "./Capture";
 
 vi.mock("../lib/mean-shift.worker", () => ({
-  extractPalette: vi.fn(() => ["#FF0000", "#00FF00", "#0000FF"]),
+  extractPalette: vi.fn(() => ({
+    hexes: ["#FF0000", "#00FF00", "#0000FF"],
+    debug: {
+      segPixels: new Uint8ClampedArray(4),
+      segWidth: 1,
+      segHeight: 1,
+      clusterSizes: [100, 100, 100],
+      bandwidth: 0.08,
+    },
+  })),
 }));
 
 function renderCapture() {

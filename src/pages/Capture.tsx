@@ -11,16 +11,20 @@ import {
   IonToolbar,
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
-import { extractPalette } from "../lib/mean-shift.worker";
+import { extractPalette, type DebugData } from "../lib/mean-shift.worker";
 import { usePalette } from "../lib/palette-store";
 
 type Status = "idle" | "extracting" | "ready" | "error";
 
 export default function Capture() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [lastHexes, setLastHexes] = useState<string[]>([]);
+  const [debugData, setDebugData] = useState<DebugData | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { state, dispatch } = usePalette();
@@ -30,10 +34,23 @@ export default function Capture() {
     if (photoUrl) URL.revokeObjectURL(photoUrl);
   }, [photoUrl]);
 
+  useEffect(() => {
+    if (!showDebug || !debugData || !debugCanvasRef.current) return;
+    const canvas = debugCanvasRef.current;
+    canvas.width = debugData.segWidth;
+    canvas.height = debugData.segHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const imgData = new ImageData(
+      new Uint8ClampedArray(debugData.segPixels),
+      debugData.segWidth,
+      debugData.segHeight,
+    );
+    ctx.putImageData(imgData, 0, 0);
+  }, [showDebug, debugData]);
+
   async function handleFile(file: File) {
     setStatus("extracting");
-    setCandidates([]);
-    setAccepted(new Set());
     if (photoUrl) URL.revokeObjectURL(photoUrl);
     setPhotoUrl(URL.createObjectURL(file));
 
@@ -46,13 +63,19 @@ export default function Capture() {
       if (!ctx) throw new Error("canvas context");
       ctx.drawImage(bitmap, 0, 0);
       const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-      const hexes = extractPalette(imageData);
+      const { hexes, debug } = extractPalette(imageData);
       if (hexes.length === 0) {
         setStatus("error");
         setErrorMsg("Couldn't find distinct colors in this photo");
         return;
       }
-      setCandidates(hexes);
+      setDebugData(debug);
+      setLastHexes(hexes);
+      // Accumulate new unique candidates across photos
+      setCandidates((prev) => {
+        const existing = new Set(prev);
+        return [...prev, ...hexes.filter((h) => !existing.has(h))];
+      });
       setStatus("ready");
     } catch (err) {
       setStatus("error");
@@ -71,6 +94,8 @@ export default function Capture() {
     }
     setAccepted(new Set(candidates));
   }
+
+  const totalSegPixels = debugData ? debugData.segWidth * debugData.segHeight : 1;
 
   return (
     <IonPage>
@@ -112,38 +137,102 @@ export default function Capture() {
           <>
             <IonText>
               <p>
-                Tap a swatch to add it to your palette. Already added: {accepted.size} /{" "}
-                {candidates.length}.
+                Tap a swatch to add it to your palette. Already added:{" "}
+                {accepted.size} / {candidates.length}.
               </p>
             </IonText>
+
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "12px 0" }}>
               {candidates.map((hex) => {
                 const isAdded = accepted.has(hex);
+                const extIdx = lastHexes.indexOf(hex);
+                const pct =
+                  showDebug && debugData && extIdx >= 0
+                    ? Math.round((debugData.clusterSizes[extIdx] / totalSegPixels) * 100)
+                    : null;
                 return (
-                  <button
+                  <div
                     key={hex}
-                    type="button"
-                    aria-label={isAdded ? `Added color ${hex}` : `Add color ${hex}`}
-                    onClick={() => !isAdded && addOne(hex)}
-                    disabled={isAdded}
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: "50%",
-                      background: hex,
-                      border: isAdded ? "3px solid var(--ion-color-primary)" : "none",
-                      cursor: isAdded ? "default" : "pointer",
-                    }}
-                  />
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={isAdded ? `Added color ${hex}` : `Add color ${hex}`}
+                      onClick={() => !isAdded && addOne(hex)}
+                      disabled={isAdded}
+                      style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: "50%",
+                        background: hex,
+                        border: isAdded
+                          ? "3px solid var(--ion-color-primary)"
+                          : "2px solid rgba(0,0,0,0.15)",
+                        cursor: isAdded ? "default" : "pointer",
+                      }}
+                    />
+                    {pct !== null && (
+                      <span style={{ fontSize: 10, color: "var(--ion-color-medium)" }}>
+                        {pct}%
+                      </span>
+                    )}
+                  </div>
                 );
               })}
             </div>
-            <IonButton onClick={acceptAll} disabled={accepted.size === candidates.length}>
-              Accept all
-            </IonButton>
-            <IonButton onClick={() => inputRef.current?.click()} fill="outline">
-              Add another photo
-            </IonButton>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              <IonButton
+                onClick={acceptAll}
+                disabled={candidates.every((h) => accepted.has(h))}
+              >
+                Accept all
+              </IonButton>
+              <IonButton onClick={() => inputRef.current?.click()} fill="outline">
+                Add another photo
+              </IonButton>
+            </div>
+
+            {debugData && (
+              <button
+                type="button"
+                onClick={() => setShowDebug((v) => !v)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--ion-color-medium)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  padding: "4px 0",
+                  marginBottom: 8,
+                  display: "block",
+                }}
+              >
+                {showDebug ? "▲ Hide debug" : "▼ Show debug"}
+              </button>
+            )}
+
+            {showDebug && debugData && (
+              <div style={{ marginBottom: 12 }}>
+                <canvas
+                  ref={debugCanvasRef}
+                  style={{
+                    width: "100%",
+                    imageRendering: "pixelated",
+                    borderRadius: 4,
+                    display: "block",
+                  }}
+                />
+                <IonText color="medium">
+                  <p style={{ fontSize: 11, margin: "4px 0 0" }}>
+                    Segmented at {debugData.segWidth}×{debugData.segHeight}px ·{" "}
+                    bandwidth {debugData.bandwidth.toFixed(3)} ·{" "}
+                    {lastHexes.length} cluster{lastHexes.length !== 1 ? "s" : ""}
+                  </p>
+                </IonText>
+              </div>
+            )}
+
             <IonButton
               expand="block"
               onClick={() => history.push("/palette")}
