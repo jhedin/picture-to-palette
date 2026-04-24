@@ -80,7 +80,9 @@ export function extractPalette(image: ImageData): ExtractResult {
       debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: 0 },
     };
   }
-  const bandwidth = Math.max(0.05, estimateBandwidth(points, 0.2));
+  // quantile=0.05 → k=10 nearest neighbours, giving within-cluster spread.
+  // Cap at 0.10 so no two visually-distinct colours ever merge.
+  const bandwidth = Math.max(0.05, Math.min(0.10, estimateBandwidth(points, 0.05)));
   const clusters = meanShift(points, { bandwidth, minBinFreq: 3 });
   const hexes = clusters.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
