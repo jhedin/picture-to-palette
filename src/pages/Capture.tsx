@@ -226,6 +226,17 @@ export default function Capture() {
                   format={(v) => v === 0 ? "off" : `×${v.toFixed(2)}`}
                   onChange={(v) => setOptions((o) => ({ ...o, minSegmentFrac: v }))}
                 />
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={options.subtractBackground}
+                    onChange={(e) => setOptions((o) => ({ ...o, subtractBackground: e.target.checked }))}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Remove background colour</span>
+                </label>
+                <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
+                  Uses edge-detected segments to identify and strip the background from the palette
+                </p>
                 <button
                   type="button"
                   onClick={() => setOptions({ ...DEFAULT_OPTIONS })}

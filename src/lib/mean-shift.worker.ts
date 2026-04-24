@@ -44,6 +44,11 @@ export interface ExtractionOptions {
    *  0 = no minimum.  0.5 = skip anything under half the expected segment size.
    *  Scales with segmentSize so it stays meaningful regardless of crop or K. */
   minSegmentFrac: number;    // default 0
+  /** Remove palette colours that match the border-detected background.
+   *  Builds a colour signature from border-touching segments, then drops
+   *  any final palette colour within BASE_DEDUP distance of that signature.
+   *  Useful when the subject sits on a clearly different background. */
+  subtractBackground: boolean; // default false
 }
 
 export const DEFAULT_OPTIONS: ExtractionOptions = {
@@ -51,6 +56,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   segBandwidthCap: 0.10,
   mergeBandwidth: 0.08,
   minSegmentFrac: 0,
+  subtractBackground: false,
 };
 
 export interface ExtractResult {
@@ -165,7 +171,7 @@ export function extractPalette(
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
 ): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac } = { ...DEFAULT_OPTIONS, ...opts };
+  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const sized = capSize(source);
   const W = sized.width, H = sized.height, N = W * H;
@@ -193,10 +199,16 @@ export function extractPalette(
   const numSeg = slicPoints.length;
 
   // Phase 2 — group pixels by segment, skipping border-touching background segments.
+  // Also collect a sample of background pixels for optional background subtraction.
   const segPixelSets: Point3[][] = Array.from({ length: numSeg }, () => []);
+  const bgSample: Point3[] = [];
   for (let i = 0; i < N; i++) {
     const si = labels[i];
-    if (si >= 0 && si < numSeg && !backgroundLabels.has(si)) {
+    if (si < 0 || si >= numSeg) continue;
+    if (backgroundLabels.has(si)) {
+      // Sample ~1 in 4 background pixels — enough for mean-shift, not expensive.
+      if (subtractBackground && i % 4 === 0) bgSample.push(labPoints[i]);
+    } else {
       segPixelSets[si].push(labPoints[i]);
     }
   }
@@ -267,13 +279,32 @@ export function extractPalette(
     ? meanShift(deduped, { bandwidth: mergeBandwidth, minBinFreq: 1, maxIter: 50 })
     : deduped;
 
-  const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
+  // Phase 4.7 — background subtraction.
+  // Cluster the border-touching background pixels to find representative background
+  // colours, then remove any palette colour that falls within BASE_DEDUP of them.
+  // Interior background segments (same colour but not touching the border) get
+  // caught because their colours match the border-segment signature.
+  let filtered = unique;
+  if (subtractBackground && bgSample.length >= 5) {
+    const bgBw = Math.max(0.04, Math.min(0.15, estimateBandwidth(bgSample, 0.3)));
+    const bgCenters = meanShift(bgSample, { bandwidth: bgBw, minBinFreq: 2, maxIter: 50 });
+    filtered = unique.filter((c) => {
+      return !bgCenters.some((bg) => {
+        const dx = c[0] - bg[0], dy = c[1] - bg[1], dz = c[2] - bg[2];
+        return Math.sqrt(dx * dx + dy * dy + dz * dz) < BASE_DEDUP;
+      });
+    });
+    // Keep at least 1 colour even if everything matched background.
+    if (filtered.length === 0) filtered = unique;
+  }
+
+  const hexes = filtered.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
   // Phase 5 — build segmentation debug image.
   // Foreground segments: coloured by their representative palette colour.
-  // Background segments (border-touching): shown at 25% brightness so the
-  // mask is visible at a glance.
-  const clusterSizes = new Array<number>(unique.length).fill(0);
+  // Background segments (border-touching): shown at 25% brightness.
+  // Uses `filtered` for colouring so subtracted colours show as background-like.
+  const clusterSizes = new Array<number>(filtered.length).fill(0);
   const segPixels = new Uint8ClampedArray(sized.data.length);
   for (let i = 0; i < N; i++) {
     const si = labels[i];
@@ -284,7 +315,7 @@ export function extractPalette(
       segPixels[i * 4 + 3] = 255;
     } else {
       const rep = segRepCenter[si] ?? labPoints[i];
-      const ci = nearestCluster(rep, unique);
+      const ci = nearestCluster(rep, filtered);
       clusterSizes[ci]++;
       const hex = hexes[ci];
       segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);
