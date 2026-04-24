@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.resolve(__dirname, "..", "public", "fixtures", "yarn-cubbies.jpg");
 
 test("crop UI appears after upload with auto-detected box", async ({ page }) => {
-  await page.goto("/capture");
+  await page.goto("/");
 
   await page.setInputFiles('input[type="file"]', FIXTURE);
 
@@ -23,7 +23,7 @@ test("crop UI appears after upload with auto-detected box", async ({ page }) => 
 });
 
 test("extract colors button runs extraction and shows chips", async ({ page }) => {
-  await page.goto("/capture");
+  await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
 
   await page.getByRole("button", { name: /extract colors/i }).waitFor({ timeout: 20_000 });
@@ -36,7 +36,7 @@ test("extract colors button runs extraction and shows chips", async ({ page }) =
 });
 
 test("use full image skips crop and extracts", async ({ page }) => {
-  await page.goto("/capture");
+  await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
 
   await page.getByRole("button", { name: /use full image/i }).waitFor({ timeout: 20_000 });
@@ -48,7 +48,7 @@ test("use full image skips crop and extracts", async ({ page }) => {
 });
 
 test("adjust crop button returns to crop UI from ready state", async ({ page }) => {
-  await page.goto("/capture");
+  await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
 
   await page.getByRole("button", { name: /extract colors/i }).waitFor({ timeout: 20_000 });

@@ -148,11 +148,13 @@ export default function Capture() {
 
         {/* ── Photo + crop overlay ───────────────────────────────────────── */}
         {photoUrl && (
-          <div style={{ position: "relative", display: "inline-block", width: "100%", marginBottom: 12 }}>
+          // Wrapper shrinks to actual rendered image size so the crop overlay
+          // exactly covers the image pixels, not the surrounding whitespace.
+          <div style={{ position: "relative", display: "block", width: "fit-content", maxWidth: "100%", margin: "0 auto 12px" }}>
             <img
               src={photoUrl}
               alt="captured"
-              style={{ display: "block", width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 8 }}
+              style={{ display: "block", maxWidth: "100%", maxHeight: 360, borderRadius: 8 }}
             />
             {status === "cropping" && (
               <CropOverlay box={cropBox} onChange={setCropBox} />
