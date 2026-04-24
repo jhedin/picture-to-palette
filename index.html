@@ -1,78 +1,18 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#3b6cff" />
+    <link rel="icon" type="image/svg+xml" href="/icon-192.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
     <title>Picture to Palette</title>
-    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <header>
-        <h1>Picture to Palette</h1>
-        <p class="tagline">
-          Upload a photo of wool balls or a traced design &mdash; Gemini returns a
-          constrained palette and a suggested DMC/yarn shopping list.
-        </p>
-      </header>
-
-      <section class="api-key">
-        <label for="api-key-input">Gemini API key</label>
-        <input
-          id="api-key-input"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Paste your Google AI Studio API key"
-        />
-        <label class="remember">
-          <input id="remember-key" type="checkbox" />
-          Remember in this browser
-        </label>
-        <p class="hint">
-          Get a key at
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">
-            aistudio.google.com/app/apikey</a>. Stored only in your browser.
-        </p>
-      </section>
-
-      <section class="upload">
-        <label for="image-input" class="drop-zone" id="drop-zone">
-          <span class="drop-zone__prompt">Drop an image here or click to choose</span>
-          <img id="preview" alt="" hidden />
-        </label>
-        <input id="image-input" type="file" accept="image/*" hidden />
-
-        <div class="controls">
-          <div class="control">
-            <label for="mode-input">Mode</label>
-            <select id="mode-input">
-              <option value="wool-stash">Wool stash &rarr; palette</option>
-              <option value="traced-design">Traced design &rarr; DMC list</option>
-              <option value="reference-image">Reference image &rarr; palette</option>
-            </select>
-          </div>
-          <div class="control">
-            <label for="count-input">Colors</label>
-            <input id="count-input" type="number" min="2" max="16" value="6" />
-          </div>
-          <div class="control">
-            <label for="brand-input">Reference brand</label>
-            <select id="brand-input">
-              <option value="DMC">DMC embroidery floss</option>
-              <option value="Anchor">Anchor embroidery floss</option>
-              <option value="generic-yarn">Generic yarn (any brand)</option>
-            </select>
-          </div>
-          <button id="extract-btn" type="button" disabled>Extract palette</button>
-        </div>
-      </section>
-
-      <section class="status" id="status" aria-live="polite"></section>
-
-      <section class="palette" id="palette"></section>
-    </main>
-
-    <script type="module" src="app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
