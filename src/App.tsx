@@ -10,7 +10,7 @@ export default function App() {
   return (
     <IonApp>
       <PaletteProvider>
-        <IonReactRouter>
+        <IonReactRouter basename="/picture-to-palette">
           <IonRouterOutlet>
             <Route exact path="/capture" component={Capture} />
             <Route exact path="/palette" component={Palette} />
