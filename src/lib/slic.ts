@@ -21,7 +21,7 @@ export function slicSuperpixels(
   K = 50,
   m = 10,
   iters = 10,
-): { points: Point3[]; weights: number[]; labels: Int32Array } {
+): { points: Point3[]; weights: number[]; labels: Int32Array; backgroundLabels: Set<number> } {
   const { width: W, height: H, data } = img;
   const N = W * H;
   const S = Math.sqrt(N / K);
@@ -129,5 +129,33 @@ export function slicSuperpixels(
     labels[i] = labels[i] >= 0 ? remap[labels[i]] : 0;
   }
 
-  return { points, weights, labels };
+  // Background detection: segments that touch two adjacent sides of the image
+  // border (i.e. they wrap around a corner) are very likely background.
+  // Segments that only touch parallel sides (top+bottom or left+right) are
+  // typically foreground objects like yarns that span the full dimension —
+  // those are kept.
+  const touchesTop = new Set<number>();
+  const touchesBottom = new Set<number>();
+  const touchesLeft = new Set<number>();
+  const touchesRight = new Set<number>();
+  for (let x = 0; x < W; x++) {
+    touchesTop.add(labels[x]);
+    touchesBottom.add(labels[(H - 1) * W + x]);
+  }
+  for (let y = 0; y < H; y++) {
+    touchesLeft.add(labels[y * W]);
+    touchesRight.add(labels[y * W + W - 1]);
+  }
+  const backgroundLabels = new Set<number>();
+  const allLabels = new Set([...touchesTop, ...touchesBottom, ...touchesLeft, ...touchesRight]);
+  for (const lbl of allLabels) {
+    const tTop = touchesTop.has(lbl), tBottom = touchesBottom.has(lbl);
+    const tLeft = touchesLeft.has(lbl), tRight = touchesRight.has(lbl);
+    // Adjacent-corner test: touches at least one of the 4 corner combinations.
+    if ((tTop && tLeft) || (tTop && tRight) || (tBottom && tLeft) || (tBottom && tRight)) {
+      backgroundLabels.add(lbl);
+    }
+  }
+
+  return { points, weights, labels, backgroundLabels };
 }

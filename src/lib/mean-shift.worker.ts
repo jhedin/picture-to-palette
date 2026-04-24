@@ -86,14 +86,16 @@ export function extractPalette(image: ImageData): ExtractResult {
   // 512 px) ends up as 1-3 segments rather than being dissolved into a
   // global colour average.
   const K = Math.max(10, Math.round(N / 1500));
-  const { labels } = slicSuperpixels(sized, K, 10);
-  const numSeg = K; // slicSuperpixels may produce fewer if some seeds are empty
+  const { points: slicPoints, labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
+  const numSeg = slicPoints.length;
 
-  // Phase 2 — group pixels by segment.
+  // Phase 2 — group pixels by segment, skipping border-touching background segments.
   const segPixelSets: Point3[][] = Array.from({ length: numSeg }, () => []);
   for (let i = 0; i < N; i++) {
     const si = labels[i];
-    if (si >= 0 && si < numSeg) segPixelSets[si].push(labPoints[i]);
+    if (si >= 0 && si < numSeg && !backgroundLabels.has(si)) {
+      segPixelSets[si].push(labPoints[i]);
+    }
   }
 
   // Phase 3 — mean-shift independently on each segment's pixels.
@@ -153,21 +155,28 @@ export function extractPalette(image: ImageData): ExtractResult {
   const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
   // Phase 5 — build segmentation debug image.
-  // Each pixel is colored by its SLIC segment's representative color, not by
-  // global nearest-cluster — this shows clean spatial regions, not a noisy
-  // color-space mosaic.
+  // Foreground segments: coloured by their representative palette colour.
+  // Background segments (border-touching): shown at 25% brightness so the
+  // mask is visible at a glance.
   const clusterSizes = new Array<number>(unique.length).fill(0);
   const segPixels = new Uint8ClampedArray(sized.data.length);
   for (let i = 0; i < N; i++) {
     const si = labels[i];
-    const rep = segRepCenter[si] ?? labPoints[i];
-    const ci = nearestCluster(rep, unique);
-    clusterSizes[ci]++;
-    const hex = hexes[ci];
-    segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);
-    segPixels[i * 4 + 1] = parseInt(hex.slice(3, 5), 16);
-    segPixels[i * 4 + 2] = parseInt(hex.slice(5, 7), 16);
-    segPixels[i * 4 + 3] = 255;
+    if (backgroundLabels.has(si)) {
+      segPixels[i * 4]     = sized.data[i * 4] >> 2;
+      segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> 2;
+      segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> 2;
+      segPixels[i * 4 + 3] = 255;
+    } else {
+      const rep = segRepCenter[si] ?? labPoints[i];
+      const ci = nearestCluster(rep, unique);
+      clusterSizes[ci]++;
+      const hex = hexes[ci];
+      segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);
+      segPixels[i * 4 + 1] = parseInt(hex.slice(3, 5), 16);
+      segPixels[i * 4 + 2] = parseInt(hex.slice(5, 7), 16);
+      segPixels[i * 4 + 3] = 255;
+    }
   }
 
   return { hexes, debug: { segPixels, segWidth: W, segHeight: H, clusterSizes, bandwidth: avgBw } };
