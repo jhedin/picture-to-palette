@@ -18,6 +18,36 @@ export interface CropBox {
   h: number;
 }
 
+/**
+ * Tuning knobs for extractPalette.  All have sensible defaults so callers
+ * only need to set the ones they want to override.
+ *
+ *  segmentSize      — target px per SLIC superpixel. Smaller = more regions,
+ *                     finer spatial detail preserved; larger = fewer regions,
+ *                     small highlights averaged away.   range 300–5000
+ *
+ *  segBandwidthCap  — ceiling on the per-segment mean-shift bandwidth.
+ *                     Lower = more sub-colours per region (shadows kept);
+ *                     higher = bolder single colour per region.  range 0.04–0.20
+ *
+ *  mergeBandwidth   — bandwidth for the second-level mean-shift that runs on
+ *                     all segment representatives.  This is the main knob for
+ *                     collapsing shadow/highlight variants of the same object:
+ *                     shadow + highlight of a yarn ball are ~0.10–0.15 apart,
+ *                     so values above 0.10 start merging them.  range 0.04–0.25
+ */
+export interface ExtractionOptions {
+  segmentSize: number;       // default 1500
+  segBandwidthCap: number;   // default 0.10
+  mergeBandwidth: number;    // default 0.12
+}
+
+export const DEFAULT_OPTIONS: ExtractionOptions = {
+  segmentSize: 1500,
+  segBandwidthCap: 0.10,
+  mergeBandwidth: 0.08, // same as old greedy DEDUP; increase toward 0.15 to collapse shadow/highlight pairs
+};
+
 export interface ExtractResult {
   hexes: string[];
   debug: DebugData;
@@ -27,6 +57,7 @@ export interface ExtractRequest {
   type: "extract";
   imageData: ImageData;
   cropRegion?: CropBox;
+  options?: Partial<ExtractionOptions>;
 }
 
 export interface ExtractResponse {
@@ -124,7 +155,12 @@ function nearestCluster(point: Point3, clusters: Point3[]): number {
   return nearest;
 }
 
-export function extractPalette(image: ImageData, cropRegion?: CropBox): ExtractResult {
+export function extractPalette(
+  image: ImageData,
+  cropRegion?: CropBox,
+  opts?: Partial<ExtractionOptions>,
+): ExtractResult {
+  const { segmentSize, segBandwidthCap, mergeBandwidth } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const sized = capSize(source);
   const W = sized.width, H = sized.height, N = W * H;
@@ -147,7 +183,7 @@ export function extractPalette(image: ImageData, cropRegion?: CropBox): ExtractR
   // Target ~1500 px per region so a typical yarn ball (50-200 px wide at
   // 512 px) ends up as 1-3 segments rather than being dissolved into a
   // global colour average.
-  const K = Math.max(10, Math.round(N / 1500));
+  const K = Math.max(10, Math.round(N / segmentSize));
   const { points: slicPoints, labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
   const numSeg = slicPoints.length;
 
@@ -183,7 +219,7 @@ export function extractPalette(image: ImageData, cropRegion?: CropBox): ExtractR
       }
       continue;
     }
-    const bw = Math.max(0.04, Math.min(0.10, estimateBandwidth(pixels, 0.3)));
+    const bw = Math.max(0.04, Math.min(segBandwidthCap, estimateBandwidth(pixels, 0.3)));
     const centers = meanShift(pixels, { bandwidth: bw, minBinFreq: 3, maxIter: 50 });
     // Representative for this segment = center nearest its mean
     const mean: Point3 = [
@@ -203,16 +239,24 @@ export function extractPalette(image: ImageData, cropRegion?: CropBox): ExtractR
     return { hexes: [], debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: avgBw } };
   }
 
-  // Phase 4 — deduplicate colours that converged to the same point across
-  // different segments (e.g. two adjacent background tiles).
-  const DEDUP = 0.08;
-  const unique: Point3[] = [];
+  // Phase 4 — greedy dedup: drop any center within BASE_DEDUP of an already-kept one.
+  // This is fast and order-stable, preserving the same baseline behaviour as before.
+  const BASE_DEDUP = 0.08;
+  const deduped: Point3[] = [];
   for (const c of allCenters) {
-    if (!unique.some((u) => {
+    if (!deduped.some((u) => {
       const dx = u[0] - c[0], dy = u[1] - c[1], dz = u[2] - c[2];
-      return Math.sqrt(dx * dx + dy * dy + dz * dz) < DEDUP;
-    })) unique.push(c);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz) < BASE_DEDUP;
+    })) deduped.push(c);
   }
+
+  // Phase 4.5 — second-level mean-shift to collapse shadow/highlight variants.
+  // Only runs when mergeBandwidth is meaningfully above the base dedup threshold.
+  // Shadow/highlight pairs of the same object are typically 0.10–0.15 apart in OKLab,
+  // so values in that range start merging them while leaving distinct hues separate.
+  const unique: Point3[] = mergeBandwidth > BASE_DEDUP
+    ? meanShift(deduped, { bandwidth: mergeBandwidth, minBinFreq: 1, maxIter: 50 })
+    : deduped;
 
   const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
@@ -249,7 +293,7 @@ if (typeof self !== "undefined" && typeof (self as unknown as Worker).postMessag
   const workerSelf = self as unknown as Worker;
   workerSelf.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
     if (e.data?.type === "extract") {
-      const result = extractPalette(e.data.imageData, e.data.cropRegion);
+      const result = extractPalette(e.data.imageData, e.data.cropRegion, e.data.options);
       const response: ExtractResponse = { type: "result", ...result };
       workerSelf.postMessage(response);
     }

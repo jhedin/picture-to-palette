@@ -11,7 +11,7 @@ import {
   IonToolbar,
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
-import { extractPalette, suggestCrop, type CropBox, type DebugData } from "../lib/mean-shift.worker";
+import { extractPalette, suggestCrop, type CropBox, type DebugData, type ExtractionOptions, DEFAULT_OPTIONS } from "../lib/mean-shift.worker";
 import { usePalette } from "../lib/palette-store";
 import { CropOverlay } from "../components/CropOverlay";
 
@@ -29,6 +29,8 @@ export default function Capture() {
   const [lastHexes, setLastHexes] = useState<string[]>([]);
   const [debugData, setDebugData] = useState<DebugData | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [options, setOptions] = useState<ExtractionOptions>({ ...DEFAULT_OPTIONS });
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { state, dispatch } = usePalette();
@@ -81,7 +83,7 @@ export default function Capture() {
     if (!imageDataRef.current) return;
     setStatus("extracting");
     try {
-      const { hexes, debug } = extractPalette(imageDataRef.current, crop);
+      const { hexes, debug } = extractPalette(imageDataRef.current, crop, options);
       if (hexes.length === 0) {
         setStatus("error");
         setErrorMsg("Couldn't find distinct colors in this region");
@@ -171,7 +173,7 @@ export default function Capture() {
                   : "Drag the handles to crop to the area of interest."}
               </p>
             </IonText>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
               <IonButton onClick={() => runExtraction(cropBox)}>
                 Extract colors
               </IonButton>
@@ -179,6 +181,50 @@ export default function Capture() {
                 Use full image
               </IonButton>
             </div>
+
+            {/* ── Extraction settings ─────────────────────────────────── */}
+            <button
+              type="button"
+              onClick={() => setShowSettings((v) => !v)}
+              style={{ background: "none", border: "none", color: "var(--ion-color-medium)", fontSize: 12, cursor: "pointer", padding: "4px 0", display: "block" }}
+            >
+              {showSettings ? "▲ Hide settings" : "▼ Extraction settings"}
+            </button>
+            {showSettings && (
+              <div style={{ padding: "8px 0 4px", display: "flex", flexDirection: "column", gap: 12 }}>
+                <ExtractionSlider
+                  label="Colour merge"
+                  hint="Low = keep shadows/highlights separate · High = collapse variants"
+                  value={options.mergeBandwidth}
+                  min={0.04} max={0.25} step={0.01}
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) => setOptions((o) => ({ ...o, mergeBandwidth: v }))}
+                />
+                <ExtractionSlider
+                  label="Within-region detail"
+                  hint="Low = more sub-colours per region · High = one bold colour per region"
+                  value={options.segBandwidthCap}
+                  min={0.04} max={0.20} step={0.01}
+                  format={(v) => v.toFixed(2)}
+                  onChange={(v) => setOptions((o) => ({ ...o, segBandwidthCap: v }))}
+                />
+                <ExtractionSlider
+                  label="Region size"
+                  hint="Small = fine spatial detail · Large = broad areas, ignores small objects"
+                  value={options.segmentSize}
+                  min={300} max={5000} step={100}
+                  format={(v) => `${v} px`}
+                  onChange={(v) => setOptions((o) => ({ ...o, segmentSize: v }))}
+                />
+                <button
+                  type="button"
+                  onClick={() => setOptions({ ...DEFAULT_OPTIONS })}
+                  style={{ background: "none", border: "none", color: "var(--ion-color-medium)", fontSize: 11, cursor: "pointer", padding: 0, textAlign: "left" }}
+                >
+                  Reset to defaults
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -284,5 +330,37 @@ export default function Capture() {
         />
       </IonContent>
     </IonPage>
+  );
+}
+
+interface SliderProps {
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+}
+
+function ExtractionSlider({ label, hint, value, min, max, step, format, onChange }: SliderProps) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 13, fontVariantNumeric: "tabular-nums", color: "var(--ion-color-primary)" }}>
+          {format(value)}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min} max={max} step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: "100%", margin: "2px 0" }}
+      />
+      <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: 0 }}>{hint}</p>
+    </div>
   );
 }
