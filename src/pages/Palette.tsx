@@ -129,6 +129,13 @@ export default function Palette() {
         <IonButton
           fill="outline"
           expand="block"
+          onClick={() => history.push("/dmc")}
+        >
+          Match DMC threads
+        </IonButton>
+        <IonButton
+          fill="outline"
+          expand="block"
           onClick={() => history.push("/capture")}
         >
           Back to Capture
