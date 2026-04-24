@@ -114,14 +114,14 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   subtractBackground: false,
   kuwahara: false,
   mergeL: 1.0,
-  segmentMethod: "slic",
+  segmentMethod: "spatial-meanshift",
   ragMergeThreshold: 0,
   fhK: 500,
   fhMinSize: 500,
   spatialBandwidth: 16,
   colorBandwidth: 0.12,
   kmeansK: 20,
-  preBlurSigma: 0,
+  preBlurSigma: 1.0,
 };
 
 export interface ExtractResult {
