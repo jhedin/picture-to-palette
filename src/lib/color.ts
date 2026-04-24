@@ -177,6 +177,96 @@ export function pickEvenly(sorted: string[], n: number): string[] {
   return result;
 }
 
+// OKLCH hue targets for hue-shift shading (sunlit = warm light assumption).
+export const SHADOW_HUE_TARGET = 220;    // blue-purple
+export const HIGHLIGHT_HUE_TARGET = 90; // yellow-orange
+const SHADE_DELTA_L = 0.08;
+const SHADE_DELTA_H = 15;   // degrees per step
+const SHADE_MAX_DIST = 0.25; // max OKLab distance to accept a palette match
+
+function hueShiftToward(h0: number, target: number, degrees: number): number {
+  const diff = ((target - h0 + 540) % 360) - 180;
+  return (h0 + Math.sign(diff) * Math.min(degrees, Math.abs(diff)) + 360) % 360;
+}
+
+function oklchToOklab(L: number, C: number, h: number): Oklab {
+  const rad = h * (Math.PI / 180);
+  return { L, a: C * Math.cos(rad), b: C * Math.sin(rad) };
+}
+
+function oklabDist(a: Oklab, b: Oklab): number {
+  const dL = a.L - b.L, da = a.a - b.a, db = a.b - b.b;
+  return Math.sqrt(dL * dL + da * da + db * db);
+}
+
+export interface ShadeRampResult {
+  /** Palette colors from darkest shadow → lightest shadow (nearest to midtone). */
+  shadows: string[];
+  /** Palette colors from lightest highlight (nearest to midtone) → brightest. */
+  highlights: string[];
+}
+
+/**
+ * Generate a hue-shifted shading ramp from a single midtone color.
+ *
+ * For each step outward, computes an ideal OKLCH position (darker+cooler for
+ * shadows, lighter+warmer for highlights) and finds the nearest palette color.
+ * Full ramp: [...shadows, midtone, ...highlights] — dark to light.
+ */
+export function shadeRamp(
+  palette: string[],
+  midtone: string,
+  steps = 2,
+): ShadeRampResult {
+  const normMid = normalizeHex(midtone);
+  if (!normMid) return { shadows: [], highlights: [] };
+
+  const { L: L0, C: C0, h: H0 } = hexToOklch(normMid);
+  const candidates = palette
+    .map(normalizeHex)
+    .filter((h): h is string => h !== null && h !== normMid)
+    .map((hex) => ({ hex, lab: hexToOklab(hex) }));
+
+  const used = new Set<string>([normMid]);
+
+  function findNearest(ideal: Oklab): string | null {
+    let best: string | null = null;
+    let bestDist = SHADE_MAX_DIST;
+    for (const { hex, lab } of candidates) {
+      if (used.has(hex)) continue;
+      const d = oklabDist(lab, ideal);
+      if (d < bestDist) { bestDist = d; best = hex; }
+    }
+    return best;
+  }
+
+  // Shadows: darker + shift toward SHADOW_HUE_TARGET.
+  const shadows: string[] = [];
+  for (let n = 1; n <= steps; n++) {
+    const L = L0 - n * SHADE_DELTA_L;
+    if (L < 0) break;
+    const C = Math.max(0, C0 - n * 0.02);
+    const H = hueShiftToward(H0, SHADOW_HUE_TARGET, n * SHADE_DELTA_H);
+    const match = findNearest(oklchToOklab(L, C, H));
+    if (match) { used.add(match); shadows.unshift(match); } // darkest first
+  }
+
+  // Highlights: lighter + shift toward HIGHLIGHT_HUE_TARGET.
+  // Chroma forms a bell curve — increases early, decreases for the palest step.
+  const highlights: string[] = [];
+  for (let n = 1; n <= steps; n++) {
+    const L = L0 + n * SHADE_DELTA_L;
+    if (L > 1) break;
+    const chromaBoost = Math.min(n, steps - n + 1) * 0.015;
+    const C = Math.max(0, C0 + chromaBoost);
+    const H = hueShiftToward(H0, HIGHLIGHT_HUE_TARGET, n * SHADE_DELTA_H);
+    const match = findNearest(oklchToOklab(L, C, H));
+    if (match) { used.add(match); highlights.push(match); }
+  }
+
+  return { shadows, highlights };
+}
+
 export interface SwatchMeta {
   hex: string;
   L: number;

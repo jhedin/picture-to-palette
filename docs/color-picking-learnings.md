@@ -4,6 +4,9 @@ Notes distilled from color theory resources, primarily:
 
 - **Snarple** — "Color Theory for Minecraft Builders" (Part 1)
   https://m.youtube.com/watch?v=jrCNMHACGik
+- **BdoubleO100 / community analysis** — hue-shift shading in Minecraft block building
+  (synthesized from PlanetMinecraft tutorials, PixelJoint, GDQuest, Blue Canary miniature
+  painting, and builder community resources)
 
 ---
 
@@ -106,3 +109,88 @@ long arc for hue-distant anchor pairs.
 - **CMYK vs RYB vs RGB**: for our purposes (digital display of yarn colors) RGB/OKLab is
   correct. Yarn itself is subtractive (RYB or CMY), but we're photographing it and
   displaying digitally, so RGB/OKLab is the right space throughout.
+
+---
+
+## Hue-shift shading (BdoubleO100 / Bdubs technique)
+
+### The core principle
+Shadows and highlights don't just get darker/lighter — they shift *color temperature*:
+- **Warm light source (sun):** highlights drift toward yellow (~90° OKLCH), shadows drift
+  toward blue-purple (~220° OKLCH)
+- **Cool light source (overcast):** inverts — highlights toward blue/cyan, shadows toward
+  warm ochre/orange
+- Default assumption (Minecraft = sunlit) is warm light, so shadows go cool
+
+Why: real shadows contain skylight (blue, from Rayleigh scattering). The visual system's
+chromatic adaptation makes unlit areas read as cooler than the lit areas.
+
+### The saturation curve (most tutorials miss this)
+Saturation peaks at the **midtone**. Both the darkest shadow and the lightest highlight
+should be *less* saturated than the base color. The common mistake is increasing saturation
+all the way to the lightest value — this looks garish.
+
+Pattern for a highlight ramp: chroma *increases* slightly for the first 1–2 steps above
+midtone, then *decreases* for the final (palest) highlight step.
+Pattern for a shadow ramp: chroma decreases monotonically into shadow.
+
+### Concrete numbers
+**Per step (HSL reference, ~10–25° per shade level):**
+- Shadow: decrease L ~0.05–0.10, shift H ~10–25° toward 240° (HSL) / 220° (OKLCH), decrease C
+- Highlight: increase L ~0.05–0.10, shift H ~10–25° toward 60° (HSL) / 90° (OKLCH),
+  increase C slightly (early steps), then decrease C (final step)
+
+**Total hue range across a full ramp:** keep under ~60–90°. Beyond that it reads as a
+different color family, not shading.
+
+**Per-hue examples (HSL):**
+- Red midtone: shadows → purple, highlights → orange
+- Orange midtone: shadows → red, highlights → yellow
+- Green midtone: shadows → teal/blue, highlights → yellow-green
+- Blue midtone: shadows → purple, highlights → cyan
+
+### Why OKLCH is better than HSL for this
+HSL has a known bug: lightening a blue causes visible drift toward magenta. OKLCH fixes
+this — equal L steps are perceptually equal regardless of starting hue, and hue stays
+stable when L or C changes. Building a shade ramp in OKLCH produces more reliable results.
+
+**OKLCH hue targets (differ from HSL):**
+- Highlight direction: ~90° (yellow-orange)
+- Shadow direction: ~220° (blue-purple)
+
+### Bdubs' specific application
+He applies hue-shift at the **block selection level** rather than pixel level:
+- Protruding / lit surfaces → warmer-hued blocks (orange terracotta, red sand)
+- Recessed / shadowed surfaces → cooler-hued blocks (dark oak, gray stone, brown mud)
+- He tends to build **flat** structures so Minecraft's own shadow engine doesn't cast
+  real shadows that conflict with his hand-painted hue-shifted shading
+
+### Implementation: "shade from base" mode
+Given one midtone color, generate a shadow/highlight ramp by walking the OKLCH hue-shift
+formula and finding the nearest palette color at each ideal position.
+
+For each shadow step n from midtone oklch(L0, C0, H0):
+```
+L_shadow = L0 - n * 0.08
+C_shadow = max(0, C0 - n * 0.02)
+H_shadow = H0 shifted n*15° toward 220°
+```
+
+For each highlight step n:
+```
+L_highlight = L0 + n * 0.08
+C_highlight = C0 + bell_curve(n, steps) * 0.015   (peaks at midpoint)
+H_highlight = H0 shifted n*15° toward 90°
+```
+
+Find nearest palette color (OKLab Euclidean distance) for each ideal point, skipping
+already-chosen colors. Accept if distance < ~0.25 (reject if palette has nothing close).
+
+### Applicability beyond Minecraft
+This technique applies directly to DMC thread color selection:
+- Pick a midtone thread color for an area
+- Use the shade ramp to find shadow and highlight threads from the DMC palette
+- The hue-shift ensures the shadow/highlight threads feel like shading, not just darker
+  versions of the same color
+- OKLab/OKLCH is the right space here because DMC color numbers are not perceptually
+  ordered — you need a perceptual color space to find truly "nearby" threads

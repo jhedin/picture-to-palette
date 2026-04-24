@@ -10,6 +10,7 @@ import {
   pickEvenly,
   swatchMeta,
   scoreGradientOutliers,
+  shadeRamp,
   type Oklab,
 } from "./color";
 
@@ -305,5 +306,60 @@ describe("scoreGradientOutliers", () => {
   it("returns all non-outliers for gradients with fewer than 3 colours", () => {
     expect(scoreGradientOutliers(["#FF0000", "#0000FF"]).every((r) => !r.isOutlier)).toBe(true);
     expect(scoreGradientOutliers(["#FF0000"]).every((r) => !r.isOutlier)).toBe(true);
+  });
+});
+
+describe("shadeRamp", () => {
+  // Grey ramp: black → dark-grey → mid-grey → light-grey → white
+  const GREYS = ["#000000", "#404040", "#808080", "#C0C0C0", "#FFFFFF"];
+  const MIDTONE = "#808080";
+
+  it("returns empty for unknown midtone", () => {
+    const result = shadeRamp(GREYS, "not-a-color");
+    expect(result.shadows).toEqual([]);
+    expect(result.highlights).toEqual([]);
+  });
+
+  it("shadows are darker than the midtone", () => {
+    const { shadows } = shadeRamp(GREYS, MIDTONE, 2);
+    const midL = hexToOklch(MIDTONE).L;
+    for (const hex of shadows) {
+      expect(hexToOklch(hex).L).toBeLessThan(midL);
+    }
+  });
+
+  it("highlights are lighter than the midtone", () => {
+    const { highlights } = shadeRamp(GREYS, MIDTONE, 2);
+    const midL = hexToOklch(MIDTONE).L;
+    for (const hex of highlights) {
+      expect(hexToOklch(hex).L).toBeGreaterThan(midL);
+    }
+  });
+
+  it("shadows are ordered darkest first", () => {
+    const { shadows } = shadeRamp(GREYS, MIDTONE, 2);
+    for (let i = 1; i < shadows.length; i++) {
+      expect(hexToOklch(shadows[i]).L).toBeGreaterThan(hexToOklch(shadows[i - 1]).L);
+    }
+  });
+
+  it("highlights are ordered lightest-near-midtone first", () => {
+    const { highlights } = shadeRamp(GREYS, MIDTONE, 2);
+    for (let i = 1; i < highlights.length; i++) {
+      expect(hexToOklch(highlights[i]).L).toBeGreaterThan(hexToOklch(highlights[i - 1]).L);
+    }
+  });
+
+  it("produces no duplicates across the full ramp", () => {
+    const { shadows, highlights } = shadeRamp(GREYS, MIDTONE, 3);
+    const all = [...shadows, MIDTONE, ...highlights];
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("returns empty shadows/highlights when palette has no suitable colors", () => {
+    // Only the midtone itself — nothing else to pick.
+    const { shadows, highlights } = shadeRamp([MIDTONE], MIDTONE, 2);
+    expect(shadows).toEqual([]);
+    expect(highlights).toEqual([]);
   });
 });
