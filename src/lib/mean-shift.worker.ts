@@ -22,33 +22,44 @@ export interface CropBox {
  * Tuning knobs for extractPalette.  All have sensible defaults so callers
  * only need to set the ones they want to override.
  *
- *  segmentSize      — target px per SLIC superpixel. Smaller = more regions,
- *                     finer spatial detail preserved; larger = fewer regions,
- *                     small highlights averaged away.   range 300–5000
+ *  segmentSize       — target px per SLIC superpixel. Smaller = more regions,
+ *                      finer spatial detail preserved; larger = fewer regions,
+ *                      small highlights averaged away.   range 300–5000
  *
- *  segBandwidthCap  — ceiling on the per-segment mean-shift bandwidth.
- *                     Lower = more sub-colours per region (shadows kept);
- *                     higher = bolder single colour per region.  range 0.04–0.20
+ *  segBandwidthCap   — ceiling on the per-segment mean-shift bandwidth.
+ *                      Lower = more sub-colours per region (shadows kept);
+ *                      higher = bolder single colour per region.  range 0.04–0.20
  *
- *  mergeBandwidth   — bandwidth for the second-level mean-shift that runs on
- *                     all segment representatives.  This is the main knob for
- *                     collapsing shadow/highlight variants of the same object:
- *                     shadow + highlight of a yarn ball are ~0.10–0.15 apart,
- *                     so values above 0.10 start merging them.  range 0.04–0.25
+ *  mergeBandwidth    — bandwidth for the second-level merge that runs on all
+ *                      segment representatives.  In 3D mode this is the OKLab
+ *                      distance threshold; in chromaMerge mode it is the 2D
+ *                      (a,b) chroma-plane distance threshold.
+ *
+ *  minSegmentFrac    — skip SLIC segments smaller than this fraction of the
+ *                      target segment size.  0 = no minimum.
+ *
+ *  subtractBackground — use histogram back-projection to identify and exclude
+ *                      background-coloured segments, extending the basic
+ *                      border-touching heuristic to interior segments.
+ *
+ *  chromaMerge       — cluster segment representatives in the OKLab (a,b)
+ *                      chroma plane only (ignoring L), then assign each cluster
+ *                      the median L of its members.  Collapses shadow/highlight
+ *                      variants that share a hue but differ in lightness.
  */
 export interface ExtractionOptions {
-  segmentSize: number;       // default 1500
-  segBandwidthCap: number;   // default 0.10
-  mergeBandwidth: number;    // default 0.08
-  /** Skip SLIC segments smaller than (minSegmentFrac × segmentSize) pixels.
-   *  0 = no minimum.  0.5 = skip anything under half the expected segment size.
-   *  Scales with segmentSize so it stays meaningful regardless of crop or K. */
-  minSegmentFrac: number;    // default 0
-  /** Remove palette colours that match the border-detected background.
-   *  Builds a colour signature from border-touching segments, then drops
-   *  any final palette colour within BASE_DEDUP distance of that signature.
-   *  Useful when the subject sits on a clearly different background. */
+  segmentSize: number;        // default 1500
+  segBandwidthCap: number;    // default 0.10
+  mergeBandwidth: number;     // default 0.08
+  minSegmentFrac: number;     // default 0
   subtractBackground: boolean; // default false
+  /** L-axis weight for the second-level merge (0–1).
+   *  1.0 = standard 3D OKLab distance (L counts fully).
+   *  0.0 = cluster in (a,b) chroma plane only; median-L reassigned per cluster.
+   *  Values like 0.2 collapse shadow/highlight variants (same hue, different L)
+   *  without merging colours that differ primarily in chroma.  Best combined
+   *  with mergeBandwidth 0.08–0.12. */
+  mergeL: number;             // default 1.0
 }
 
 export const DEFAULT_OPTIONS: ExtractionOptions = {
@@ -57,6 +68,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   mergeBandwidth: 0.08,
   minSegmentFrac: 0,
   subtractBackground: false,
+  mergeL: 1.0,
 };
 
 export interface ExtractResult {
@@ -171,7 +183,7 @@ export function extractPalette(
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
 ): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground } = { ...DEFAULT_OPTIONS, ...opts };
+  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const sized = capSize(source);
   const W = sized.width, H = sized.height, N = W * H;
@@ -190,45 +202,85 @@ export function extractPalette(
   }
 
   // Phase 1 — SLIC spatial segmentation.
-  // Divides the image into compact colour-coherent regions (objects/edges).
-  // Target ~1500 px per region so a typical yarn ball (50-200 px wide at
-  // 512 px) ends up as 1-3 segments rather than being dissolved into a
-  // global colour average.
   const K = Math.max(10, Math.round(N / segmentSize));
   const { points: slicPoints, labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
   const numSeg = slicPoints.length;
 
-  // Phase 2 — group pixels by segment, skipping border-touching background segments.
-  // Also collect a sample of background pixels for optional background subtraction.
-  const segPixelSets: Point3[][] = Array.from({ length: numSeg }, () => []);
-  const bgSample: Point3[] = [];
-  for (let i = 0; i < N; i++) {
-    const si = labels[i];
-    if (si < 0 || si >= numSeg) continue;
-    if (backgroundLabels.has(si)) {
-      // Sample ~1 in 4 background pixels — enough for mean-shift, not expensive.
-      if (subtractBackground && i % 4 === 0) bgSample.push(labPoints[i]);
-    } else {
-      segPixelSets[si].push(labPoints[i]);
+  // Phase 1.5 — back-projection background extension (when subtractBackground=true).
+  //
+  // Builds a 2D (a,b) histogram from the already-identified border-touching segments,
+  // then computes a background ratio for each non-border segment:
+  //   ratio[a,b] = bgPixels[bin] / allPixels[bin]
+  // A segment whose pixels land mostly in high-ratio bins shares its colour with the
+  // border background, so we extend backgroundLabels to include it.
+  //
+  // This catches interior background segments (between yarn balls) that don't touch
+  // the frame edge directly but are the same colour as those that do.
+  const extendedBgLabels = new Set<number>(backgroundLabels);
+
+  if (subtractBackground && backgroundLabels.size > 0) {
+    const BINS = 24;
+    const AB_MIN = -0.4, AB_MAX = 0.4, AB_RANGE = AB_MAX - AB_MIN;
+    const binIdx = (v: number) =>
+      Math.min(BINS - 1, Math.max(0, Math.floor((v - AB_MIN) / AB_RANGE * BINS)));
+
+    const histBg  = new Float32Array(BINS * BINS);
+    const histAll = new Float32Array(BINS * BINS);
+
+    for (let i = 0; i < N; i++) {
+      const si = labels[i];
+      if (si < 0 || si >= numSeg) continue;
+      const ai = binIdx(labPoints[i][1]);
+      const bi = binIdx(labPoints[i][2]);
+      histAll[ai * BINS + bi]++;
+      if (backgroundLabels.has(si)) histBg[ai * BINS + bi]++;
+    }
+
+    // For each non-background segment, average the (bgCount/allCount) ratio across
+    // its pixels.  Segments where most pixels share their (a,b) with the border get
+    // flagged as extended background.
+    const segRatioSum = new Float32Array(numSeg);
+    const segRatioCount = new Int32Array(numSeg);
+    for (let i = 0; i < N; i++) {
+      const si = labels[i];
+      if (si < 0 || si >= numSeg || backgroundLabels.has(si)) continue;
+      const ai = binIdx(labPoints[i][1]);
+      const bi = binIdx(labPoints[i][2]);
+      const all = histAll[ai * BINS + bi];
+      segRatioSum[si]  += all > 0 ? histBg[ai * BINS + bi] / all : 0;
+      segRatioCount[si]++;
+    }
+
+    // Segments where most pixels share their (a,b) with the border are
+    // classified as extended background.  0.15 is empirically good: it catches
+    // interior background segments (ratio 0.15–0.22) while leaving foreground
+    // subjects (ratio < 0.08) untouched.
+    const BG_RATIO_THRESHOLD = 0.15;
+    for (let si = 0; si < numSeg; si++) {
+      if (!backgroundLabels.has(si) && segRatioCount[si] > 0 &&
+          segRatioSum[si] / segRatioCount[si] > BG_RATIO_THRESHOLD) {
+        extendedBgLabels.add(si);
+      }
     }
   }
 
+  // Phase 2 — group pixels by segment, skipping background segments.
+  const segPixelSets: Point3[][] = Array.from({ length: numSeg }, () => []);
+  for (let i = 0; i < N; i++) {
+    const si = labels[i];
+    if (si < 0 || si >= numSeg || extendedBgLabels.has(si)) continue;
+    segPixelSets[si].push(labPoints[i]);
+  }
+
   // Phase 3 — mean-shift independently on each segment's pixels.
-  // Track per-segment representative colors so the debug view can color
-  // each pixel from its own segment rather than a global nearest-cluster.
   const allCenters: Point3[] = [];
-  // segRepCenter[si] = the dominant center found for segment si
   const segRepCenter: Point3[] = new Array(numSeg);
   let totalBw = 0, bwCount = 0;
 
   for (let si = 0; si < numSeg; si++) {
     const pixels = segPixelSets[si];
-    // Skip segments below the minimum size threshold — labels, glints, edge slivers.
-    // Threshold is a fraction of total pixels so it scales with crop size.
-    // segRepCenter[si] stays undefined; phase 5 falls back to per-pixel nearest-cluster.
     if (minSegmentFrac > 0 && pixels.length < minSegmentFrac * segmentSize) continue;
     if (pixels.length < 5) {
-      // Too few pixels — use the mean of whatever is there
       if (pixels.length > 0) {
         const mean: Point3 = [
           pixels.reduce((s, p) => s + p[0], 0) / pixels.length,
@@ -242,7 +294,6 @@ export function extractPalette(
     }
     const bw = Math.max(0.04, Math.min(segBandwidthCap, estimateBandwidth(pixels, 0.3)));
     const centers = meanShift(pixels, { bandwidth: bw, minBinFreq: 3, maxIter: 50 });
-    // Representative for this segment = center nearest its mean
     const mean: Point3 = [
       pixels.reduce((s, p) => s + p[0], 0) / pixels.length,
       pixels.reduce((s, p) => s + p[1], 0) / pixels.length,
@@ -260,8 +311,7 @@ export function extractPalette(
     return { hexes: [], debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: avgBw } };
   }
 
-  // Phase 4 — greedy dedup: drop any center within BASE_DEDUP of an already-kept one.
-  // This is fast and order-stable, preserving the same baseline behaviour as before.
+  // Phase 4 — greedy dedup in 3D OKLab.
   const BASE_DEDUP = 0.08;
   const deduped: Point3[] = [];
   for (const c of allCenters) {
@@ -271,40 +321,54 @@ export function extractPalette(
     })) deduped.push(c);
   }
 
-  // Phase 4.5 — second-level mean-shift to collapse shadow/highlight variants.
-  // Only runs when mergeBandwidth is meaningfully above the base dedup threshold.
-  // Shadow/highlight pairs of the same object are typically 0.10–0.15 apart in OKLab,
-  // so values in that range start merging them while leaving distinct hues separate.
-  const unique: Point3[] = mergeBandwidth > BASE_DEDUP
-    ? meanShift(deduped, { bandwidth: mergeBandwidth, minBinFreq: 1, maxIter: 50 })
-    : deduped;
-
-  // Phase 4.7 — background subtraction.
-  // Cluster the border-touching background pixels to find representative background
-  // colours, then remove any palette colour that falls within BASE_DEDUP of them.
-  // Interior background segments (same colour but not touching the border) get
-  // caught because their colours match the border-segment signature.
-  let filtered = unique;
-  if (subtractBackground && bgSample.length >= 5) {
-    const bgBw = Math.max(0.04, Math.min(0.15, estimateBandwidth(bgSample, 0.3)));
-    const bgCenters = meanShift(bgSample, { bandwidth: bgBw, minBinFreq: 2, maxIter: 50 });
-    filtered = unique.filter((c) => {
-      return !bgCenters.some((bg) => {
-        const dx = c[0] - bg[0], dy = c[1] - bg[1], dz = c[2] - bg[2];
-        return Math.sqrt(dx * dx + dy * dy + dz * dz) < BASE_DEDUP;
-      });
+  // Phase 4.5 — second-level merge to collapse shadow/highlight variants.
+  //
+  //  mergeL=1.0 (default): standard 3D OKLab mean-shift.  Only fires when
+  //    mergeBandwidth > BASE_DEDUP, preserving backward-compatible defaults.
+  //
+  //  mergeL=0.0: pure (a,b) chroma-plane clustering.  Projects all centers to
+  //    (0, a, b), clusters there, then assigns each cluster its members' median L.
+  //    Same-hue shadow/highlight variants share an (a,b) direction so they
+  //    collapse to one colour.
+  //
+  //  0 < mergeL < 1: L-weighted distance.  L is scaled by mergeL before
+  //    clustering so lightness differences count less.  Allows fine-tuning:
+  //    values around 0.2 collapse shadow pairs (ΔL~0.3) while keeping colours
+  //    that differ mainly in chroma (Δ(a,b)~0.05) separate.  Runs even when
+  //    mergeBandwidth <= BASE_DEDUP, since the L scaling already effectively
+  //    increases the merge range in the lightness direction.
+  let unique: Point3[];
+  if (mergeL <= 0) {
+    // Pure chroma-plane clustering: project L to 0, median-L per cluster.
+    const projected = deduped.map(c => [0, c[1], c[2]] as Point3);
+    const clusters2D = meanShift(projected, { bandwidth: Math.max(BASE_DEDUP, mergeBandwidth), minBinFreq: 1, maxIter: 50 });
+    const clusterLs: number[][] = clusters2D.map(() => []);
+    for (let i = 0; i < deduped.length; i++) {
+      clusterLs[nearestCluster(projected[i], clusters2D)].push(deduped[i][0]);
+    }
+    unique = clusters2D.map(([, ca, cb], i) => {
+      const Ls = [...clusterLs[i]].sort((a, b) => a - b);
+      return [Ls.length > 0 ? Ls[Math.floor(Ls.length / 2)] : 0.5, ca, cb] as Point3;
     });
-    // Keep at least 1 colour even if everything matched background.
-    if (filtered.length === 0) filtered = unique;
+  } else if (mergeL < 1.0) {
+    // L-weighted clustering: scale L so lightness differences count less.
+    const weighted = deduped.map(c => [c[0] * mergeL, c[1], c[2]] as Point3);
+    const merged = meanShift(weighted, { bandwidth: mergeBandwidth, minBinFreq: 1, maxIter: 50 });
+    unique = merged.map(c => [c[0] / mergeL, c[1], c[2]] as Point3);
+  } else {
+    // Standard 3D merge — only fires when bandwidth meaningfully above BASE_DEDUP.
+    unique = mergeBandwidth > BASE_DEDUP
+      ? meanShift(deduped, { bandwidth: mergeBandwidth, minBinFreq: 1, maxIter: 50 })
+      : deduped;
   }
 
-  const hexes = filtered.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
+  const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
   // Phase 5 — build segmentation debug image.
-  // Foreground segments: coloured by their representative palette colour.
-  // Background segments (border-touching): shown at 25% brightness.
-  // Uses `filtered` for colouring so subtracted colours show as background-like.
-  const clusterSizes = new Array<number>(filtered.length).fill(0);
+  //   Border-touching background   → 25% brightness (very dark)
+  //   Back-projection extended bg  → 50% brightness (medium dark)
+  //   Foreground                   → coloured by palette cluster
+  const clusterSizes = new Array<number>(unique.length).fill(0);
   const segPixels = new Uint8ClampedArray(sized.data.length);
   for (let i = 0; i < N; i++) {
     const si = labels[i];
@@ -313,9 +377,15 @@ export function extractPalette(
       segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> 2;
       segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> 2;
       segPixels[i * 4 + 3] = 255;
+    } else if (extendedBgLabels.has(si)) {
+      // Back-projection identified segment — shown at 50% so user can see what was removed.
+      segPixels[i * 4]     = sized.data[i * 4] >> 1;
+      segPixels[i * 4 + 1] = sized.data[i * 4 + 1] >> 1;
+      segPixels[i * 4 + 2] = sized.data[i * 4 + 2] >> 1;
+      segPixels[i * 4 + 3] = 255;
     } else {
       const rep = segRepCenter[si] ?? labPoints[i];
-      const ci = nearestCluster(rep, filtered);
+      const ci = nearestCluster(rep, unique);
       clusterSizes[ci]++;
       const hex = hexes[ci];
       segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);

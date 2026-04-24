@@ -235,8 +235,16 @@ export default function Capture() {
                   <span style={{ fontSize: 13, fontWeight: 500 }}>Remove background colour</span>
                 </label>
                 <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
-                  Uses edge-detected segments to identify and strip the background from the palette
+                  Back-projects border colours inward to strip interior background segments too
                 </p>
+                <ExtractionSlider
+                  label="Merge brightness sensitivity"
+                  hint="1 = standard 3D merge · 0.2 = collapse shadows/highlights of same hue · 0 = hue-only (chroma plane)"
+                  value={options.mergeL}
+                  min={0} max={1.0} step={0.05}
+                  format={(v) => v === 1 ? "full" : v === 0 ? "hue only" : v.toFixed(2)}
+                  onChange={(v) => setOptions((o) => ({ ...o, mergeL: v }))}
+                />
                 <button
                   type="button"
                   onClick={() => setOptions({ ...DEFAULT_OPTIONS })}
