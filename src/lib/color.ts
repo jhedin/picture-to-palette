@@ -67,13 +67,20 @@ export type GradientMode = "natural" | "lightness" | "saturation" | "hue";
 const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
 const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
 
+// Max lateral distance from the A→B segment (as a fraction of segment length)
+// allowed in "natural" mode.  Keeps candidates inside a cylinder rather than
+// the full half-space, filtering out colours that project between the anchors
+// but are far off-axis perceptually (e.g. a green between cream and tan).
+export const NATURAL_PERP_THRESHOLD = 0.35;
+
 /**
  * Given two anchor colours and a mode, return every palette colour that
  * falls *between* the anchors according to the mode's own axis, sorted
  * from A toward B along that axis.  Each mode uses a different filter
  * *and* a different sort so the candidate set genuinely changes.
  *
- *   natural    — OKLab projection t ∈ (0,1); sorted by t
+ *   natural    — OKLab projection t ∈ (0,1) AND perpendicular distance
+ *                within NATURAL_PERP_THRESHOLD * |AB|; sorted by t
  *   lightness  — L strictly between LA and LB; sorted by L
  *   saturation — chroma C strictly between CA and CB; sorted by C
  *   hue        — hue h on the shorter arc hA→hB (exclusive); sorted by h
@@ -101,13 +108,16 @@ export function gradientBetween(
     const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
     const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
     if (abLenSq === 0) return [];
+    const maxPerpSq = NATURAL_PERP_THRESHOLD * NATURAL_PERP_THRESHOLD * abLenSq;
     return base
       .map(({ hex, lab }) => {
         const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
+        const apLenSq = ap.L * ap.L + ap.a * ap.a + ap.b * ap.b;
         const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-        return { hex, t };
+        const perpSq = apLenSq - t * t * abLenSq;
+        return { hex, t, perpSq };
       })
-      .filter(({ t }) => t > 0 && t < 1)
+      .filter(({ t, perpSq }) => t > 0 && t < 1 && perpSq < maxPerpSq)
       .sort((x, y) => x.t - y.t)
       .map(({ hex }) => hex);
 
@@ -165,4 +175,62 @@ export function pickEvenly(sorted: string[], n: number): string[] {
     result.push(sorted[Math.floor((i + 0.5) * M / n)]);
   }
   return result;
+}
+
+export interface SwatchMeta {
+  hex: string;
+  L: number;
+  C: number;
+}
+
+export function swatchMeta(hex: string): SwatchMeta {
+  const { L, C } = hexToOklch(hex);
+  return { hex, L: Math.round(L * 100) / 100, C: Math.round(C * 1000) / 1000 };
+}
+
+export interface OutlierResult {
+  hex: string;
+  isOutlier: boolean;
+  lDev: number;
+  cDev: number;
+}
+
+/**
+ * Score each swatch in a gradient for how well it fits the linear L and C
+ * trend.  Outliers have |deviation| > 1.5 SD from the linear regression.
+ * Anchors (first and last) are never flagged.
+ */
+export function scoreGradientOutliers(gradient: string[]): OutlierResult[] {
+  const n = gradient.length;
+  if (n < 3) return gradient.map((hex) => ({ hex, isOutlier: false, lDev: 0, cDev: 0 }));
+
+  const metas = gradient.map(swatchMeta);
+  const xs = metas.map((_, i) => i);
+
+  function linearResiduals(ys: number[]): number[] {
+    const meanX = (n - 1) / 2;
+    const meanY = ys.reduce((s, v) => s + v, 0) / n;
+    const ssX = xs.reduce((s, x) => s + (x - meanX) ** 2, 0);
+    const slope = ssX === 0 ? 0 : xs.reduce((s, x, i) => s + (x - meanX) * (ys[i] - meanY), 0) / ssX;
+    const intercept = meanY - slope * meanX;
+    return ys.map((y, i) => y - (slope * i + intercept));
+  }
+
+  const lRes = linearResiduals(metas.map((m) => m.L));
+  const cRes = linearResiduals(metas.map((m) => m.C));
+
+  const sd = (vals: number[]) => {
+    const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+    return Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);
+  };
+
+  const sdL = Math.max(0.005, sd(lRes));
+  const sdC = Math.max(0.002, sd(cRes));
+
+  return metas.map(({ hex }, i) => {
+    // Never flag the anchor endpoints.
+    const isOutlier = i > 0 && i < n - 1 &&
+      (Math.abs(lRes[i]) > 1.5 * sdL || Math.abs(cRes[i]) > 1.5 * sdC);
+    return { hex, isOutlier, lDev: lRes[i], cDev: cRes[i] };
+  });
 }
