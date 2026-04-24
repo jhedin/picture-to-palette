@@ -1,6 +1,8 @@
 import { meanShift, estimateBandwidth, type Point3 } from "./mean-shift";
 import { hexToOklab, oklabToHex } from "./color";
 import { slicSuperpixels } from "./slic";
+import { kuwaharaFilter } from "./kuwahara";
+import { buildAdjacency, computeMBD } from "./mbd";
 
 export interface DebugData {
   segPixels: Uint8ClampedArray;
@@ -38,14 +40,19 @@ export interface CropBox {
  *  minSegmentFrac    — skip SLIC segments smaller than this fraction of the
  *                      target segment size.  0 = no minimum.
  *
- *  subtractBackground — use histogram back-projection to identify and exclude
- *                      background-coloured segments, extending the basic
- *                      border-touching heuristic to interior segments.
+ *  subtractBackground — use Minimum Barrier Distance (MBD) propagation to
+ *                      identify and exclude background-coloured segments.
+ *                      Border-touching segments seed the BG model; interior
+ *                      segments reachable via a continuous same-colour path
+ *                      (low max-edge cost) are also removed.  Handles interior
+ *                      gaps between yarn balls that border-only heuristics miss.
  *
- *  chromaMerge       — cluster segment representatives in the OKLab (a,b)
- *                      chroma plane only (ignoring L), then assign each cluster
- *                      the median L of its members.  Collapses shadow/highlight
- *                      variants that share a hue but differ in lightness.
+ *  kuwahara          — apply a 5×5 Kuwahara texture-flattening filter before
+ *                      SLIC segmentation.  Collapses knitted nubs and yarn
+ *                      micro-shadows into flat colour zones while preserving
+ *                      sharp ball/background boundaries.  Directly reduces the
+ *                      number of spurious "same-colour" variants extracted from
+ *                      textured backgrounds.
  */
 export interface ExtractionOptions {
   segmentSize: number;        // default 1500
@@ -53,6 +60,7 @@ export interface ExtractionOptions {
   mergeBandwidth: number;     // default 0.08
   minSegmentFrac: number;     // default 0
   subtractBackground: boolean; // default false
+  kuwahara: boolean;           // default false — flatten texture before SLIC
   /** L-axis weight for the second-level merge (0–1).
    *  1.0 = standard 3D OKLab distance (L counts fully).
    *  0.0 = cluster in (a,b) chroma plane only; median-L reassigned per cluster.
@@ -68,6 +76,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   mergeBandwidth: 0.08,
   minSegmentFrac: 0,
   subtractBackground: false,
+  kuwahara: false,
   mergeL: 1.0,
 };
 
@@ -183,9 +192,10 @@ export function extractPalette(
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
 ): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
+  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, subtractBackground, kuwahara, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
-  const sized = capSize(source);
+  const capped = capSize(source);
+  const sized = kuwahara ? kuwaharaFilter(capped) : capped;
   const W = sized.width, H = sized.height, N = W * H;
 
   // Pre-convert all pixels to OKLab once (SLIC and mean-shift both need it).
@@ -206,60 +216,60 @@ export function extractPalette(
   const { points: slicPoints, labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
   const numSeg = slicPoints.length;
 
-  // Phase 1.5 — back-projection background extension (when subtractBackground=true).
+  // Phase 1.5 — MBD background propagation (when subtractBackground=true).
   //
-  // Builds a 2D (a,b) histogram from the already-identified border-touching segments,
-  // then computes a background ratio for each non-border segment:
-  //   ratio[a,b] = bgPixels[bin] / allPixels[bin]
-  // A segment whose pixels land mostly in high-ratio bins shares its colour with the
-  // border background, so we extend backgroundLabels to include it.
+  // Builds a superpixel adjacency graph from the SLIC label map, then runs a
+  // minimax-Dijkstra from the border seed segments.  The Minimum Barrier Distance
+  // (MBD) of each interior segment is the minimum, over all paths to the border,
+  // of the maximum single-edge OKLab distance along that path.
   //
-  // This catches interior background segments (between yarn balls) that don't touch
-  // the frame edge directly but are the same colour as those that do.
-  const extendedBgLabels = new Set<number>(backgroundLabels);
+  // Interior background segments (e.g. the gap between yarn balls) have MBD ≈ 0
+  // because a continuous same-colour path meanders around the balls.  Foreground
+  // yarn segments have high MBD because any path to the border must cross the
+  // sharp colour boundary at the ball edge.
+  //
+  // Replaces the older histogram back-projection approach: avoids the contamination
+  // problem (SLIC seeds eating border pixels) and correctly handles interior gaps.
+  // Only seed from border labels when the caller has opted in — otherwise
+  // Phase 2 must include ALL segments regardless of border touching.
+  const extendedBgLabels = new Set<number>(subtractBackground ? backgroundLabels : []);
 
   if (subtractBackground && backgroundLabels.size > 0) {
-    const BINS = 24;
-    const AB_MIN = -0.4, AB_MAX = 0.4, AB_RANGE = AB_MAX - AB_MIN;
-    const binIdx = (v: number) =>
-      Math.min(BINS - 1, Math.max(0, Math.floor((v - AB_MIN) / AB_RANGE * BINS)));
+    const adj = buildAdjacency(labels, W, H, numSeg);
+    const mbd = computeMBD(backgroundLabels, adj, slicPoints);
 
-    const histBg  = new Float32Array(BINS * BINS);
-    const histAll = new Float32Array(BINS * BINS);
+    // Compute a representative background color from the border seeds.
+    let bgL = 0, bgA = 0, bgB = 0;
+    for (const b of backgroundLabels) { bgL += slicPoints[b][0]; bgA += slicPoints[b][1]; bgB += slicPoints[b][2]; }
+    bgL /= backgroundLabels.size; bgA /= backgroundLabels.size; bgB /= backgroundLabels.size;
+    const bgChroma = Math.sqrt(bgA * bgA + bgB * bgB);
+    const bgHue = Math.atan2(bgB, bgA); // radians
 
-    for (let i = 0; i < N; i++) {
-      const si = labels[i];
-      if (si < 0 || si >= numSeg) continue;
-      const ai = binIdx(labPoints[i][1]);
-      const bi = binIdx(labPoints[i][2]);
-      histAll[ai * BINS + bi]++;
-      if (backgroundLabels.has(si)) histBg[ai * BINS + bi]++;
-    }
+    // Segments reachable via a low-cost MBD path are candidates for removal.
+    // But on textured surfaces the MBD can propagate through a gradual gradient
+    // into distinctly different foreground colours.  Guard: only remove a chromatic
+    // segment if its hue is within HUE_THRESHOLD of the background hue.
+    // Near-achromatic segments (noise, neutral labels) are always removed by MBD.
+    const MBD_THRESHOLD = 0.15;
+    const HUE_THRESHOLD = 35 * (Math.PI / 180); // 35° in radians
+    const ACHROMATIC_C = 0.025; // below this chroma, hue is unreliable
 
-    // For each non-background segment, average the (bgCount/allCount) ratio across
-    // its pixels.  Segments where most pixels share their (a,b) with the border get
-    // flagged as extended background.
-    const segRatioSum = new Float32Array(numSeg);
-    const segRatioCount = new Int32Array(numSeg);
-    for (let i = 0; i < N; i++) {
-      const si = labels[i];
-      if (si < 0 || si >= numSeg || backgroundLabels.has(si)) continue;
-      const ai = binIdx(labPoints[i][1]);
-      const bi = binIdx(labPoints[i][2]);
-      const all = histAll[ai * BINS + bi];
-      segRatioSum[si]  += all > 0 ? histBg[ai * BINS + bi] / all : 0;
-      segRatioCount[si]++;
-    }
-
-    // Segments where most pixels share their (a,b) with the border are
-    // classified as extended background.  0.15 is empirically good: it catches
-    // interior background segments (ratio 0.15–0.22) while leaving foreground
-    // subjects (ratio < 0.08) untouched.
-    const BG_RATIO_THRESHOLD = 0.15;
     for (let si = 0; si < numSeg; si++) {
-      if (!backgroundLabels.has(si) && segRatioCount[si] > 0 &&
-          segRatioSum[si] / segRatioCount[si] > BG_RATIO_THRESHOLD) {
-        extendedBgLabels.add(si);
+      if (!backgroundLabels.has(si) && mbd[si] < MBD_THRESHOLD) {
+        let remove = true;
+        if (bgChroma >= ACHROMATIC_C) {
+          const [, sA, sB] = slicPoints[si];
+          const segC = Math.sqrt(sA * sA + sB * sB);
+          if (segC >= ACHROMATIC_C) {
+            // Both bg and segment are chromatic — only remove if hue is similar.
+            const segHue = Math.atan2(sB, sA);
+            const hueDiff = Math.abs(Math.atan2(
+              Math.sin(segHue - bgHue), Math.cos(segHue - bgHue),
+            ));
+            if (hueDiff >= HUE_THRESHOLD) remove = false;
+          }
+        }
+        if (remove) extendedBgLabels.add(si);
       }
     }
   }

@@ -6,7 +6,7 @@ import { PaletteProvider } from "../lib/palette-store";
 import Capture from "./Capture";
 
 vi.mock("../lib/mean-shift.worker", () => ({
-  DEFAULT_OPTIONS: { segmentSize: 1500, segBandwidthCap: 0.10, mergeBandwidth: 0.08, minSegmentFrac: 0, subtractBackground: false, mergeL: 1.0 },
+  DEFAULT_OPTIONS: { segmentSize: 1500, segBandwidthCap: 0.10, mergeBandwidth: 0.08, minSegmentFrac: 0, subtractBackground: false, kuwahara: false, mergeL: 1.0 },
   suggestCrop: vi.fn(() => ({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 })),
   extractPalette: vi.fn(() => ({
     hexes: ["#FF0000", "#00FF00", "#0000FF"],

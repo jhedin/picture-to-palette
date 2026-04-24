@@ -132,29 +132,29 @@ export function slicSuperpixels(
   // Background detection: segments that touch two adjacent sides of the image
   // border (i.e. they wrap around a corner) are very likely background.
   // Segments that only touch parallel sides (top+bottom or left+right) are
-  // typically foreground objects like yarns that span the full dimension —
-  // those are kept.
-  const touchesTop = new Set<number>();
-  const touchesBottom = new Set<number>();
-  const touchesLeft = new Set<number>();
-  const touchesRight = new Set<number>();
+  // Count how many border pixels each segment covers.  A segment must own
+  // at least MIN_BORDER_FRAC of the total border perimeter to be considered
+  // a background seed.  This excludes foreground objects that happen to clip
+  // one edge of the image (e.g. a yarn skein placed at the left border) while
+  // still including the large, wrap-around background region.
+  const MIN_BORDER_FRAC = 0.08;
+  const borderCount = new Map<number, number>();
+  const addBorder = (lbl: number) => {
+    if (lbl >= 0) borderCount.set(lbl, (borderCount.get(lbl) ?? 0) + 1);
+  };
   for (let x = 0; x < W; x++) {
-    touchesTop.add(labels[x]);
-    touchesBottom.add(labels[(H - 1) * W + x]);
+    addBorder(labels[x]);
+    addBorder(labels[(H - 1) * W + x]);
   }
   for (let y = 0; y < H; y++) {
-    touchesLeft.add(labels[y * W]);
-    touchesRight.add(labels[y * W + W - 1]);
+    addBorder(labels[y * W]);
+    addBorder(labels[y * W + W - 1]);
   }
+  const totalBorderPixels = 2 * (W + H) - 4;
+  const minBorderPixels = Math.max(1, Math.round(MIN_BORDER_FRAC * totalBorderPixels));
   const backgroundLabels = new Set<number>();
-  const allLabels = new Set([...touchesTop, ...touchesBottom, ...touchesLeft, ...touchesRight]);
-  for (const lbl of allLabels) {
-    const tTop = touchesTop.has(lbl), tBottom = touchesBottom.has(lbl);
-    const tLeft = touchesLeft.has(lbl), tRight = touchesRight.has(lbl);
-    // Adjacent-corner test: touches at least one of the 4 corner combinations.
-    if ((tTop && tLeft) || (tTop && tRight) || (tBottom && tLeft) || (tBottom && tRight)) {
-      backgroundLabels.add(lbl);
-    }
+  for (const [lbl, count] of borderCount) {
+    if (count >= minBorderPixels) backgroundLabels.add(lbl);
   }
 
   return { points, weights, labels, backgroundLabels };

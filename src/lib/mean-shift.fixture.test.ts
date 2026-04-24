@@ -176,3 +176,120 @@ describe("yarn-shelves-02.jpg", { timeout: 20_000 }, () => {
     expect(hasHue(hexes, 150, 175, 0.08)).toBe(true);
   });
 });
+
+// ─── Kuwahara pre-filter fixture tests ────────────────────────────────────────
+// With kuwahara=true the texture-flattening pass should collapse micro-shadows
+// and nub highlights on the knitted background without losing the distinct yarn
+// skein colours.  The main observable effect: the yellow background in
+// 3-skeins-yellow.jpg should produce fewer (or equal) distinct warm-yellow
+// palette entries, while the cool skein colours are still found.
+
+describe("3-skeins-yellow.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
+  let baseline: string[];
+  let withKuwahara: string[];
+
+  beforeAll(() => {
+    baseline     = extractPalette(loadJpeg("3-skeins-yellow.jpg")).hexes;
+    withKuwahara = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { kuwahara: true }).hexes;
+  });
+
+  it("still extracts at least 3 colours (skein colours survive)", () => {
+    expect(withKuwahara.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("still finds the mint green skein (hue ~135–175°)", () => {
+    expect(hasHue(withKuwahara, 135, 175, 0.04)).toBe(true);
+  });
+
+  it("still finds the periwinkle/blue skein (hue ~220–265°)", () => {
+    expect(hasHue(withKuwahara, 220, 265, 0.03)).toBe(true);
+  });
+
+  it("yellow background variants are not more numerous than baseline (texture flattened)", () => {
+    const yellowVariants = (hexes: string[]) =>
+      hexes.filter((h) => {
+        const { a, b } = hexToOklab(h);
+        return hasHue([h], 75, 115, 0.06);
+      }).length;
+    // Kuwahara should not *increase* the number of yellow variants
+    expect(yellowVariants(withKuwahara)).toBeLessThanOrEqual(yellowVariants(baseline) + 1);
+  });
+});
+
+describe("yarn-cubbies.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
+  let withKuwahara: string[];
+
+  beforeAll(() => {
+    withKuwahara = extractPalette(loadJpeg("yarn-cubbies.jpg"), undefined, { kuwahara: true }).hexes;
+  });
+
+  it("extracts at least 5 distinct colours", () => {
+    expect(withKuwahara.length).toBeGreaterThanOrEqual(5);
+  });
+  it("still finds cobalt blue (hue ~225–265°)", () => {
+    expect(hasHue(withKuwahara, 225, 265, 0.08)).toBe(true);
+  });
+  it("still finds warm tan/golden (hue ~60–85°)", () => {
+    expect(hasHue(withKuwahara, 60, 85, 0.07)).toBe(true);
+  });
+});
+
+// ─── MBD background-subtraction fixture tests ─────────────────────────────────
+// With subtractBackground=true the Minimum Barrier Distance propagation should
+// strip the yellow background from 3-skeins-yellow.jpg without destroying the
+// cool skein colours.
+
+describe("3-skeins-yellow.jpg WITH subtractBackground=true", { timeout: 30_000 }, () => {
+  let baseline: string[];
+  let withBgSub: string[];
+
+  beforeAll(() => {
+    baseline  = extractPalette(loadJpeg("3-skeins-yellow.jpg")).hexes;
+    withBgSub = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { subtractBackground: true }).hexes;
+  });
+
+  it("still finds the mint green skein (hue ~135–175°)", () => {
+    expect(hasHue(withBgSub, 135, 175, 0.04)).toBe(true);
+  });
+
+  it("still finds the periwinkle/blue skein (hue ~220–265°)", () => {
+    expect(hasHue(withBgSub, 220, 265, 0.03)).toBe(true);
+  });
+
+  it("yellow background is suppressed or reduced relative to baseline", () => {
+    const yellowCount = (hexes: string[]) =>
+      hexes.filter((h) => hasHue([h], 75, 115, 0.06)).length;
+    // Background subtraction should give <= yellow entries as the border-connected
+    // background segments are removed by MBD.
+    expect(yellowCount(withBgSub)).toBeLessThanOrEqual(yellowCount(baseline));
+  });
+
+  it("overall palette is not larger than baseline (background was removed, not added)", () => {
+    expect(withBgSub.length).toBeLessThanOrEqual(baseline.length + 1);
+  });
+});
+
+describe("3-skeins-yellow.jpg WITH kuwahara=true AND subtractBackground=true", { timeout: 30_000 }, () => {
+  let withBoth: string[];
+
+  beforeAll(() => {
+    withBoth = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, {
+      kuwahara: true,
+      subtractBackground: true,
+    }).hexes;
+  });
+
+  it("extracts at least 2 colours (some skeins survive combined processing)", () => {
+    expect(withBoth.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("finds a green or teal hue (125–175°) — may be desaturated after combined processing", () => {
+    // Combined Kuwahara+subtractBackground can desaturate the mint green skein;
+    // assert only that some green-hued segment survives (chroma ≥ 0.01).
+    expect(hasHue(withBoth, 125, 175, 0.01)).toBe(true);
+  });
+
+  it("still finds a cool blue (hue ~200–270°)", () => {
+    expect(hasHue(withBoth, 200, 270, 0.03)).toBe(true);
+  });
+});

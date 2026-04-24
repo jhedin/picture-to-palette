@@ -229,13 +229,24 @@ export default function Capture() {
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                   <input
                     type="checkbox"
+                    checked={options.kuwahara}
+                    onChange={(e) => setOptions((o) => ({ ...o, kuwahara: e.target.checked }))}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>Flatten texture (Kuwahara)</span>
+                </label>
+                <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
+                  Smooths knitted nubs and yarn highlights before segmenting — reduces spurious colour variants from texture
+                </p>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
                     checked={options.subtractBackground}
                     onChange={(e) => setOptions((o) => ({ ...o, subtractBackground: e.target.checked }))}
                   />
                   <span style={{ fontSize: 13, fontWeight: 500 }}>Remove background colour</span>
                 </label>
                 <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "-8px 0 0 24px" }}>
-                  Back-projects border colours inward to strip interior background segments too
+                  Uses Minimum Barrier Distance from border segments to strip background inward
                 </p>
                 <ExtractionSlider
                   label="Merge brightness sensitivity"
