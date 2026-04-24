@@ -2028,3 +2028,137 @@ Expected: PASS.
 git add src/App.tsx e2e/smoke.spec.ts
 git commit -m "Wire /capture, /palette, /gradients routes; retire Home placeholder"
 ```
+
+---
+
+## Task 12 · E2E flow test + final M1 verification
+
+Full Playwright test that exercises the real code path (no mocks) against a committed fixture photo. Then run the whole suite + typecheck + production build to confirm M1 is shippable.
+
+**Files:**
+- Create: `e2e/capture-to-save.spec.ts`
+- Delete: `e2e/smoke.spec.ts`
+
+- [ ] **Step 1: Write the E2E test**
+
+Create `e2e/capture-to-save.spec.ts`:
+
+```ts
+import { test, expect } from "@playwright/test";
+import path from "node:path";
+
+test("full flow: capture → pick anchors → generate → save", async ({ page }, testInfo) => {
+  const downloadPromise = page.waitForEvent("download");
+
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/capture$/);
+
+  // Upload fixture via the hidden <input type="file">
+  const fixture = path.resolve(__dirname, "..", "public", "fixtures", "yarn-cubbies.jpg");
+  await page.setInputFiles('input[type="file"]', fixture);
+
+  // Wait for extraction to finish (chips appear).
+  await page.waitForSelector('button[aria-label^="Add color #"]', { timeout: 20_000 });
+
+  // Accept all extracted candidates.
+  await page.getByRole("button", { name: /accept all/i }).click();
+
+  // Move to Palette.
+  await page.getByRole("button", { name: /next → palette/i }).click();
+  await expect(page).toHaveURL(/\/palette$/);
+
+  // Pick two anchors (first two swatches).
+  const swatches = page.getByRole("button", { name: /swatch #/i });
+  const count = await swatches.count();
+  expect(count).toBeGreaterThanOrEqual(2);
+  await swatches.nth(0).click();
+  await swatches.nth(1).click();
+
+  // Generate.
+  await page.getByRole("button", { name: /generate gradients/i }).click();
+  await expect(page).toHaveURL(/\/gradients$/);
+
+  // Pick the first candidate.
+  const candidates = page.getByRole("button", { name: /gradient candidate/i });
+  await expect(candidates.first()).toBeVisible();
+  await candidates.first().click();
+
+  // Save and assert a download fired.
+  await page.getByRole("button", { name: /^save$/i }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^palette-.+\.png$/);
+
+  // Attach the PNG to the test report for visual inspection.
+  await testInfo.attach("saved-gradient.png", {
+    path: await download.path(),
+    contentType: "image/png",
+  });
+});
+```
+
+- [ ] **Step 2: Delete the smoke test**
+
+```bash
+git rm e2e/smoke.spec.ts
+```
+
+- [ ] **Step 3: Run the full unit suite**
+
+Run: `npm test`
+Expected: PASS — every test file (`color`, `mean-shift`, `mean-shift.worker`, `palette-store`, `gradient-canvas`, `Capture`, `Palette`, `Gradients`) green.
+
+- [ ] **Step 4: Run the E2E flow test**
+
+Run: `npx playwright install chromium` (first run only) then `npm run test:e2e`
+Expected: 1 test passed ("full flow: capture → pick anchors → generate → save"). The Playwright report attaches a real rendered PNG from the fixture — open it and eyeball it.
+
+- [ ] **Step 5: Typecheck**
+
+Run: `npm run typecheck`
+Expected: exit 0.
+
+- [ ] **Step 6: Production build**
+
+Run: `npm run build`
+Expected: exit 0. A `dist/` directory appears with `index.html`, hashed JS chunks, the PWA manifest, and `sw.js` (service worker).
+
+- [ ] **Step 7: Install to phone (manual, one-time sanity)**
+
+Serve the build: `npx serve dist -l 5173` (or any static server). Open `http://<your-LAN-IP>:5173` on an Android phone in Chrome, use "Add to Home Screen" from the menu, launch from the home screen icon. Confirm you can upload a photo, extract a palette, pick anchors, save a PNG. Airplane-mode the phone and confirm the app still opens from the home screen (PWA offline-capable).
+
+- [ ] **Step 8: Commit and push**
+
+```bash
+git add e2e/capture-to-save.spec.ts
+git commit -m "Add full-flow E2E; retire smoke test; M1 shipped"
+git push
+```
+
+---
+
+## Done — M1 ships here.
+
+### Self-review (run through the spec)
+
+- **Section 1 · Capture** — covered by Task 8 (Capture.tsx, worker integration, chips, accept-all, edge cases for 0 extracted colors via the toast).
+- **Section 2 · Palette** — covered by Task 9 (grid, anchor state machine wired to Task 6's reducer, × remove).
+- **Section 3 · Gradient candidates** — covered by Task 10 (k∈{0,1,2,3} candidates from Task 3's `pickIntermediates`, CSS `linear-gradient(in oklab, ...)` rendering).
+- **Section 4 · Save** — covered by Task 10 (Canvas render via Task 7's `renderGradientPng`, download via `<a download>`).
+- **Section 5 · Auto-suggest** — explicitly out of M1; picked up in the M2 spec/plan (not this document).
+
+### Spec-coverage gap check
+
+- **"Extraction exceeds 3s → no timeout in M1"** — implicitly covered: `Capture.tsx` leaves the progress bar indeterminate; no timeout wired in.
+- **"Capacitor native build"** — explicitly M4 non-goal.
+- **"Bitmap PWA icons"** — explicitly deferred in the spec; Task 1 uses the existing SVG icons from the scaffold.
+
+### Type consistency check
+
+- `PaletteEntry` / `PaletteState` defined in Task 6, consumed unchanged in Tasks 8-10.
+- `Oklab` / `Oklch` defined in Task 2, consumed in Task 3 and Task 7.
+- `Point3` defined in Task 4, consumed in Task 5.
+- `ExtractRequest` / `ExtractResponse` defined in Task 5; Task 8 calls `extractPalette` directly (synchronous function that the worker entrypoint also calls) rather than going through `postMessage` — keeping the test path synchronous. If performance profiling after M1 shows the main thread blocking noticeably on large photos, swap to the real `postMessage` path in a follow-up (file change only — same `extractPalette` function runs on either side).
+
+### Placeholder scan
+
+No `TODO`, `TBD`, "implement later", or "similar to Task N" — every step has concrete code or exact commands.
