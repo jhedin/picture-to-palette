@@ -29,6 +29,13 @@ coverage
 
 # Build artifacts
 *.tsbuildinfo
+# tsc composite emit artifacts (root-level config files)
+vite.config.js
+vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts
+playwright.config.js
+playwright.config.d.ts
 
 # PWA generated assets
 dev-dist
