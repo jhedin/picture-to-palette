@@ -78,24 +78,24 @@ function hasNeutral(hexes: string[], minL: number, maxL: number, maxC = 0.06): b
 // Also visible: white paper labels.
 describe("3-skeins-yellow.jpg", { timeout: 20_000 }, () => {
   let hexes: string[];
-  beforeAll(() => {
-    ({ hexes } = extractPalette(loadJpeg("3-skeins-yellow.jpg")));
+  beforeAll(async () => {
+    ({ hexes } = await extractPalette(loadJpeg("3-skeins-yellow.jpg")));
   });
 
-  it("extracts at least 4 distinct colours", () => {
+  it("extracts at least 4 distinct colours", async () => {
     expect(hexes.length).toBeGreaterThanOrEqual(4);
   });
-  it("finds the yellow background (hue ~85–110°, high chroma)", () => {
+  it("finds the yellow background (hue ~85–110°, high chroma)", async () => {
     expect(hasHue(hexes, 85, 110, 0.08)).toBe(true);
   });
-  it("finds the mint green skein (hue ~135–175°)", () => {
+  it("finds the mint green skein (hue ~135–175°)", async () => {
     // #B7DDCA h=164° c=0.048 — genuine mint, just below typical chroma threshold
     expect(hasHue(hexes, 135, 175, 0.04)).toBe(true);
   });
-  it("finds the periwinkle/light-blue skein (hue ~220–265°)", () => {
+  it("finds the periwinkle/light-blue skein (hue ~220–265°)", async () => {
     expect(hasHue(hexes, 220, 265, 0.03)).toBe(true);
   });
-  it("finds the deep teal skein as a cool blue-teal darker than the periwinkle", () => {
+  it("finds the deep teal skein as a cool blue-teal darker than the periwinkle", async () => {
     // The teal ball is compressed/shadowed to h≈238°, c≈0.035, L≈0.43.
     // Require L>0.35 to exclude near-black artifacts present in the regressed output.
     expect(hasColorWithL(hexes, 215, 265, 0.02, 0.35)).toBe(true);
@@ -106,23 +106,23 @@ describe("3-skeins-yellow.jpg", { timeout: 20_000 }, () => {
 // Shelf of yarn cubbies with blues, grays, teal, olive, mauve, tan.
 describe("yarn-cubbies.jpg", { timeout: 20_000 }, () => {
   let hexes: string[];
-  beforeAll(() => {
-    ({ hexes } = extractPalette(loadJpeg("yarn-cubbies.jpg")));
+  beforeAll(async () => {
+    ({ hexes } = await extractPalette(loadJpeg("yarn-cubbies.jpg")));
   });
 
-  it("extracts at least 6 distinct colours", () => {
+  it("extracts at least 6 distinct colours", async () => {
     expect(hexes.length).toBeGreaterThanOrEqual(6);
   });
-  it("finds the cobalt/medium blue yarn (hue ~225–265°)", () => {
+  it("finds the cobalt/medium blue yarn (hue ~225–265°)", async () => {
     expect(hasHue(hexes, 225, 265, 0.08)).toBe(true);
   });
-  it("finds the light neutral / off-white yarn (chroma < 0.06, L > 0.7)", () => {
+  it("finds the light neutral / off-white yarn (chroma < 0.06, L > 0.7)", async () => {
     expect(hasNeutral(hexes, 0.7, 1.0, 0.06)).toBe(true);
   });
-  it("finds the warm wood-shelf or tan yarn (hue ~55–95°)", () => {
+  it("finds the warm wood-shelf or tan yarn (hue ~55–95°)", async () => {
     expect(hasHue(hexes, 55, 95, 0.03)).toBe(true);
   });
-  it("finds the saturated tan/golden yarn (hue ~60–85°, chroma > 0.07)", () => {
+  it("finds the saturated tan/golden yarn (hue ~60–85°, chroma > 0.07)", async () => {
     // The sage/olive (bottom-right) blends with warm tans at 128 px and is not
     // reliably detected. The rich caramel yarn (#BC8B4D h=71° c=0.099) IS found.
     expect(hasHue(hexes, 60, 85, 0.07)).toBe(true);
@@ -134,20 +134,20 @@ describe("yarn-cubbies.jpg", { timeout: 20_000 }, () => {
 // rust/orange, cream, slate blues on the right.
 describe("yarn-shelves-01.jpg", { timeout: 20_000 }, () => {
   let hexes: string[];
-  beforeAll(() => {
-    ({ hexes } = extractPalette(loadJpeg("yarn-shelves-01.jpg")));
+  beforeAll(async () => {
+    ({ hexes } = await extractPalette(loadJpeg("yarn-shelves-01.jpg")));
   });
 
-  it("extracts at least 5 distinct colours", () => {
+  it("extracts at least 5 distinct colours", async () => {
     expect(hexes.length).toBeGreaterThanOrEqual(5);
   });
-  it("finds the cobalt blue yarn (hue ~225–270°, high chroma)", () => {
+  it("finds the cobalt blue yarn (hue ~225–270°, high chroma)", async () => {
     expect(hasHue(hexes, 225, 270, 0.08)).toBe(true);
   });
-  it("finds the camel / tan Lettlopi yarn (hue ~55–100°, moderate L)", () => {
+  it("finds the camel / tan Lettlopi yarn (hue ~55–100°, moderate L)", async () => {
     expect(hasHue(hexes, 55, 100, 0.03)).toBe(true);
   });
-  it("finds a bright green-teal yarn (hue ~150–175°, high chroma)", () => {
+  it("finds a bright green-teal yarn (hue ~150–175°, high chroma)", async () => {
     // The rust/orange area is too small at 128 px to reliably extract.
     // A vivid teal-green IS clearly present (#2E976E h=163° c=0.114).
     expect(hasHue(hexes, 150, 175, 0.08)).toBe(true);
@@ -158,20 +158,20 @@ describe("yarn-shelves-01.jpg", { timeout: 20_000 }, () => {
 // Same store, very similar content to shelves-01.
 describe("yarn-shelves-02.jpg", { timeout: 20_000 }, () => {
   let hexes: string[];
-  beforeAll(() => {
-    ({ hexes } = extractPalette(loadJpeg("yarn-shelves-02.jpg")));
+  beforeAll(async () => {
+    ({ hexes } = await extractPalette(loadJpeg("yarn-shelves-02.jpg")));
   });
 
-  it("extracts at least 5 distinct colours", () => {
+  it("extracts at least 5 distinct colours", async () => {
     expect(hexes.length).toBeGreaterThanOrEqual(5);
   });
-  it("finds the cobalt blue yarn (hue ~225–270°, high chroma)", () => {
+  it("finds the cobalt blue yarn (hue ~225–270°, high chroma)", async () => {
     expect(hasHue(hexes, 225, 270, 0.08)).toBe(true);
   });
-  it("finds the camel / tan yarn (hue ~55–100°)", () => {
+  it("finds the camel / tan yarn (hue ~55–100°)", async () => {
     expect(hasHue(hexes, 55, 100, 0.03)).toBe(true);
   });
-  it("finds a bright green-teal yarn (hue ~150–175°, high chroma)", () => {
+  it("finds a bright green-teal yarn (hue ~150–175°, high chroma)", async () => {
     // Same note as shelves-01: rust area too small; teal-green IS found (#197F5C h=164° c=0.105).
     expect(hasHue(hexes, 150, 175, 0.08)).toBe(true);
   });
@@ -188,24 +188,24 @@ describe("3-skeins-yellow.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
   let baseline: string[];
   let withKuwahara: string[];
 
-  beforeAll(() => {
-    baseline     = extractPalette(loadJpeg("3-skeins-yellow.jpg")).hexes;
-    withKuwahara = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { kuwahara: true }).hexes;
+  beforeAll(async () => {
+    baseline     = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"))).hexes;
+    withKuwahara = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { kuwahara: true })).hexes;
   });
 
-  it("still extracts at least 3 colours (skein colours survive)", () => {
+  it("still extracts at least 3 colours (skein colours survive)", async () => {
     expect(withKuwahara.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("still finds the mint green skein (hue ~135–175°)", () => {
+  it("still finds the mint green skein (hue ~135–175°)", async () => {
     expect(hasHue(withKuwahara, 135, 175, 0.04)).toBe(true);
   });
 
-  it("still finds the periwinkle/blue skein (hue ~220–265°)", () => {
+  it("still finds the periwinkle/blue skein (hue ~220–265°)", async () => {
     expect(hasHue(withKuwahara, 220, 265, 0.03)).toBe(true);
   });
 
-  it("yellow background variants are not more numerous than baseline (texture flattened)", () => {
+  it("yellow background variants are not more numerous than baseline (texture flattened)", async () => {
     const yellowVariants = (hexes: string[]) =>
       hexes.filter((h) => hasHue([h], 75, 115, 0.06)).length;
     // Kuwahara should not *increase* the number of yellow variants
@@ -216,17 +216,17 @@ describe("3-skeins-yellow.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
 describe("yarn-cubbies.jpg WITH kuwahara=true", { timeout: 30_000 }, () => {
   let withKuwahara: string[];
 
-  beforeAll(() => {
-    withKuwahara = extractPalette(loadJpeg("yarn-cubbies.jpg"), undefined, { kuwahara: true }).hexes;
+  beforeAll(async () => {
+    withKuwahara = (await extractPalette(loadJpeg("yarn-cubbies.jpg"), undefined, { kuwahara: true })).hexes;
   });
 
-  it("extracts at least 5 distinct colours", () => {
+  it("extracts at least 5 distinct colours", async () => {
     expect(withKuwahara.length).toBeGreaterThanOrEqual(5);
   });
-  it("still finds cobalt blue (hue ~225–265°)", () => {
+  it("still finds cobalt blue (hue ~225–265°)", async () => {
     expect(hasHue(withKuwahara, 225, 265, 0.08)).toBe(true);
   });
-  it("still finds warm tan/golden (hue ~60–85°)", () => {
+  it("still finds warm tan/golden (hue ~60–85°)", async () => {
     expect(hasHue(withKuwahara, 60, 85, 0.07)).toBe(true);
   });
 });
@@ -240,20 +240,20 @@ describe("3-skeins-yellow.jpg WITH subtractBackground=true", { timeout: 30_000 }
   let baseline: string[];
   let withBgSub: string[];
 
-  beforeAll(() => {
-    baseline  = extractPalette(loadJpeg("3-skeins-yellow.jpg")).hexes;
-    withBgSub = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { subtractBackground: true }).hexes;
+  beforeAll(async () => {
+    baseline  = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"))).hexes;
+    withBgSub = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { subtractBackground: true })).hexes;
   });
 
-  it("still finds the mint green skein (hue ~135–175°)", () => {
+  it("still finds the mint green skein (hue ~135–175°)", async () => {
     expect(hasHue(withBgSub, 135, 175, 0.04)).toBe(true);
   });
 
-  it("still finds the periwinkle/blue skein (hue ~220–265°)", () => {
+  it("still finds the periwinkle/blue skein (hue ~220–265°)", async () => {
     expect(hasHue(withBgSub, 220, 265, 0.03)).toBe(true);
   });
 
-  it("yellow background is suppressed or reduced relative to baseline", () => {
+  it("yellow background is suppressed or reduced relative to baseline", async () => {
     const yellowCount = (hexes: string[]) =>
       hexes.filter((h) => hasHue([h], 75, 115, 0.06)).length;
     // Background subtraction should give <= yellow entries as the border-connected
@@ -261,7 +261,7 @@ describe("3-skeins-yellow.jpg WITH subtractBackground=true", { timeout: 30_000 }
     expect(yellowCount(withBgSub)).toBeLessThanOrEqual(yellowCount(baseline));
   });
 
-  it("overall palette is not larger than baseline (background was removed, not added)", () => {
+  it("overall palette is not larger than baseline (background was removed, not added)", async () => {
     expect(withBgSub.length).toBeLessThanOrEqual(baseline.length + 1);
   });
 });
@@ -269,24 +269,24 @@ describe("3-skeins-yellow.jpg WITH subtractBackground=true", { timeout: 30_000 }
 describe("3-skeins-yellow.jpg WITH kuwahara=true AND subtractBackground=true", { timeout: 30_000 }, () => {
   let withBoth: string[];
 
-  beforeAll(() => {
-    withBoth = extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, {
+  beforeAll(async () => {
+    withBoth = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, {
       kuwahara: true,
       subtractBackground: true,
-    }).hexes;
+    })).hexes;
   });
 
-  it("extracts at least 2 colours (some skeins survive combined processing)", () => {
+  it("extracts at least 2 colours (some skeins survive combined processing)", async () => {
     expect(withBoth.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("finds a green or teal hue (125–175°) — may be desaturated after combined processing", () => {
+  it("finds a green or teal hue (125–175°) — may be desaturated after combined processing", async () => {
     // Combined Kuwahara+subtractBackground can desaturate the mint green skein;
     // assert only that some green-hued segment survives (chroma ≥ 0.01).
     expect(hasHue(withBoth, 125, 175, 0.01)).toBe(true);
   });
 
-  it("still finds a cool blue (hue ~200–270°)", () => {
+  it("still finds a cool blue (hue ~200–270°)", async () => {
     expect(hasHue(withBoth, 200, 270, 0.03)).toBe(true);
   });
 });

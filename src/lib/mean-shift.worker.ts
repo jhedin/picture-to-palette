@@ -3,6 +3,12 @@ import { hexToOklab, oklabToHex } from "./color";
 import { slicSuperpixels } from "./slic";
 import { kuwaharaFilter } from "./kuwahara";
 import { buildAdjacency, computeMBD } from "./mbd";
+import { felzenszwalb } from "./felzenszwalb";
+import { spatialMeanShift } from "./spatial-meanshift";
+import { spatialKMeansSegmentation } from "./sam-segmentation";
+import { ragMerge } from "./rag-merge";
+
+export type SegmentMethod = "slic" | "felzenszwalb" | "spatial-meanshift" | "spatial-kmeans" | "sam";
 
 export interface DebugData {
   segPixels: Uint8ClampedArray;
@@ -72,6 +78,25 @@ export interface ExtractionOptions {
    *  without merging colours that differ primarily in chroma.  Best combined
    *  with mergeBandwidth 0.08–0.12. */
   mergeL: number;             // default 1.0
+
+  // ── Segmentation method ──────────────────────────────────────────────────
+  segmentMethod: SegmentMethod; // default "slic"
+
+  /** Post-process any method with Region Adjacency Graph merging.
+   *  Adjacent segments whose OKLab distance is below this threshold are merged.
+   *  0 = disabled. */
+  ragMergeThreshold: number;  // default 0
+
+  // Felzenszwalb parameters
+  fhK: number;        // scale constant — higher → larger components. default 500
+  fhMinSize: number;  // minimum component size in pixels. default 500
+
+  // Spatial mean-shift parameters
+  spatialBandwidth: number;  // kernel radius in pixels. default 16
+  colorBandwidth: number;    // OKLab color kernel radius. default 0.12
+
+  // Spatial K-means parameters
+  kmeansK: number;  // number of clusters. default 20
 }
 
 export const DEFAULT_OPTIONS: ExtractionOptions = {
@@ -83,6 +108,13 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   subtractBackground: false,
   kuwahara: false,
   mergeL: 1.0,
+  segmentMethod: "slic",
+  ragMergeThreshold: 0,
+  fhK: 500,
+  fhMinSize: 500,
+  spatialBandwidth: 16,
+  colorBandwidth: 0.12,
+  kmeansK: 20,
 };
 
 export interface ExtractResult {
@@ -101,6 +133,11 @@ export interface ExtractResponse {
   type: "result";
   hexes: string[];
   debug: DebugData;
+}
+
+export interface StatusMessage {
+  type: "status";
+  message: string;
 }
 
 /** Crop an ImageData to the given normalised box. */
@@ -182,6 +219,20 @@ function capSize(src: ImageData): ImageData {
   return new ImageData(out, w, h);
 }
 
+/** Re-detect background segments by border pixel coverage after any relabelling. */
+function detectBorderBackground(labels: Int32Array, W: number, H: number): Set<number> {
+  const borderCount = new Map<number, number>();
+  let total = 0;
+  const add = (lbl: number) => { borderCount.set(lbl, (borderCount.get(lbl) ?? 0) + 1); total++; };
+  for (let x = 0; x < W; x++) { add(labels[x]); add(labels[(H - 1) * W + x]); }
+  for (let y = 1; y < H - 1; y++) { add(labels[y * W]); add(labels[y * W + W - 1]); }
+  const bg = new Set<number>();
+  for (const [lbl, cnt] of borderCount) {
+    if (cnt / total >= 0.08) bg.add(lbl);
+  }
+  return bg;
+}
+
 function nearestCluster(point: Point3, clusters: Point3[]): number {
   let nearest = 0, minD = Infinity;
   for (let j = 0; j < clusters.length; j++) {
@@ -192,12 +243,20 @@ function nearestCluster(point: Point3, clusters: Point3[]): number {
   return nearest;
 }
 
-export function extractPalette(
+export async function extractPalette(
   image: ImageData,
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
-): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac, excludeBorder, subtractBackground, kuwahara, mergeL } = { ...DEFAULT_OPTIONS, ...opts };
+  onStatus?: (msg: string) => void,
+): Promise<ExtractResult> {
+  const {
+    segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac,
+    excludeBorder, subtractBackground, kuwahara, mergeL,
+    segmentMethod, ragMergeThreshold,
+    fhK, fhMinSize,
+    spatialBandwidth, colorBandwidth,
+    kmeansK,
+  } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const capped = capSize(source);
   const sized = kuwahara ? kuwaharaFilter(capped) : capped;
@@ -216,10 +275,41 @@ export function extractPalette(
     return { hexes: [], debug: { segPixels: new Uint8ClampedArray(0), segWidth: 0, segHeight: 0, clusterSizes: [], bandwidth: 0 } };
   }
 
-  // Phase 1 — SLIC spatial segmentation.
-  const K = Math.max(10, Math.round(N / segmentSize));
-  const { points: slicPoints, labels, backgroundLabels } = slicSuperpixels(sized, K, 10);
-  const numSeg = slicPoints.length;
+  // Phase 1 — spatial segmentation (dispatched to chosen method).
+  let segPoints: Point3[];
+  let labels: Int32Array;
+  let backgroundLabels: Set<number>;
+
+  if (segmentMethod === "felzenszwalb") {
+    const r = felzenszwalb(sized, 0.5, fhK, fhMinSize);
+    segPoints = r.points; labels = r.labels; backgroundLabels = r.backgroundLabels;
+  } else if (segmentMethod === "spatial-meanshift") {
+    const r = spatialMeanShift(sized, { spatialBandwidth, colorBandwidth });
+    segPoints = r.points; labels = r.labels; backgroundLabels = r.backgroundLabels;
+  } else if (segmentMethod === "spatial-kmeans") {
+    const r = spatialKMeansSegmentation(sized, kmeansK);
+    segPoints = r.points; labels = r.labels; backgroundLabels = r.backgroundLabels;
+  } else if (segmentMethod === "sam") {
+    const { transformersSegmentation } = await import("./sam-segmentation");
+    const r = await transformersSegmentation(sized, onStatus);
+    segPoints = r.points; labels = r.labels; backgroundLabels = r.backgroundLabels;
+  } else {
+    // slic (default)
+    const K = Math.max(10, Math.round(N / segmentSize));
+    const r = slicSuperpixels(sized, K, 10);
+    segPoints = r.points; labels = r.labels; backgroundLabels = r.backgroundLabels;
+  }
+
+  // Optional RAG merge post-processing — collapses adjacent segments with
+  // similar colors. Applies after any segmentation method.
+  if (ragMergeThreshold > 0) {
+    const merged = ragMerge(labels, segPoints, W, H, ragMergeThreshold);
+    segPoints = merged.points;
+    labels = merged.labels;
+    backgroundLabels = detectBorderBackground(labels, W, H);
+  }
+
+  const numSeg = segPoints.length;
 
   // Phase 1.5 — MBD background propagation (when subtractBackground=true).
   //
@@ -241,11 +331,11 @@ export function extractPalette(
 
   if (subtractBackground && backgroundLabels.size > 0) {
     const adj = buildAdjacency(labels, W, H, numSeg);
-    const mbd = computeMBD(backgroundLabels, adj, slicPoints);
+    const mbd = computeMBD(backgroundLabels, adj, segPoints);
 
     // Compute a representative background color from the border seeds.
     let bgL = 0, bgA = 0, bgB = 0;
-    for (const b of backgroundLabels) { bgL += slicPoints[b][0]; bgA += slicPoints[b][1]; bgB += slicPoints[b][2]; }
+    for (const b of backgroundLabels) { bgL += segPoints[b][0]; bgA += segPoints[b][1]; bgB += segPoints[b][2]; }
     bgL /= backgroundLabels.size; bgA /= backgroundLabels.size; bgB /= backgroundLabels.size;
     const bgChroma = Math.sqrt(bgA * bgA + bgB * bgB);
     const bgHue = Math.atan2(bgB, bgA); // radians
@@ -266,7 +356,7 @@ export function extractPalette(
     for (let si = 0; si < numSeg; si++) {
       if (!backgroundLabels.has(si) && mbd[si] < MBD_THRESHOLD) {
         let remove = true;
-        const [sL, sA, sB] = slicPoints[si];
+        const [sL, sA, sB] = segPoints[si];
         if (bgChroma >= ACHROMATIC_C) {
           const segC = Math.sqrt(sA * sA + sB * sB);
           if (segC >= ACHROMATIC_C) {
@@ -427,9 +517,13 @@ if (typeof self !== "undefined" && typeof (self as unknown as Worker).postMessag
   const workerSelf = self as unknown as Worker;
   workerSelf.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
     if (e.data?.type === "extract") {
-      const result = extractPalette(e.data.imageData, e.data.cropRegion, e.data.options);
-      const response: ExtractResponse = { type: "result", ...result };
-      workerSelf.postMessage(response);
+      const onStatus = (message: string) => {
+        workerSelf.postMessage({ type: "status", message } satisfies StatusMessage);
+      };
+      extractPalette(e.data.imageData, e.data.cropRegion, e.data.options, onStatus).then((result) => {
+        const response: ExtractResponse = { type: "result", ...result };
+        workerSelf.postMessage(response);
+      });
     }
   });
 }

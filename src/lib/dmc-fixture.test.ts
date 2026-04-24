@@ -92,24 +92,24 @@ function dmcHasNeutral(
 // red berries, pinkish-grey branches, white overcast background.
 describe("starling.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("starling.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("starling.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a dark/black thread for the iridescent body", () => {
+  it("finds a dark/black thread for the iridescent body", async () => {
     expect(dmcHasDark(dmc, 0.32)).toBe(true);
   });
-  it("finds a light thread for the white/overcast background", () => {
+  it("finds a light thread for the white/overcast background", async () => {
     expect(dmcHasLight(dmc, 0.8)).toBe(true);
   });
-  it("finds a warm buff/tan thread for feather edges (hue ~50–100°)", () => {
+  it("finds a warm buff/tan thread for feather edges (hue ~50–100°)", async () => {
     expect(dmcHasHue(dmc, 50, 100, 0.03)).toBe(true);
   });
-  it("finds a red thread for the crabapple berries (hue ~0–45°)", () => {
+  it("finds a red thread for the crabapple berries (hue ~0–45°)", async () => {
     expect(dmcHasHue(dmc, 0, 45, 0.08)).toBe(true);
   });
 });
@@ -120,21 +120,21 @@ describe("starling.jpg", { timeout: 30_000 }, () => {
 // yellow beak, warm brown mulch/soil.
 describe("robin.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("robin.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("robin.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a dark thread for the head/back (L < 0.35)", () => {
+  it("finds a dark thread for the head/back (L < 0.35)", async () => {
     expect(dmcHasDark(dmc, 0.35)).toBe(true);
   });
-  it("finds an orange-red thread for the breast (hue ~15–55°, high chroma)", () => {
+  it("finds an orange-red thread for the breast (hue ~15–55°, high chroma)", async () => {
     expect(dmcHasHue(dmc, 15, 55, 0.09)).toBe(true);
   });
-  it("finds a warm brown thread for the mulch ground (hue ~35–80°)", () => {
+  it("finds a warm brown thread for the mulch ground (hue ~35–80°)", async () => {
     expect(dmcHasHue(dmc, 35, 80, 0.03)).toBe(true);
   });
 });
@@ -144,18 +144,18 @@ describe("robin.jpg", { timeout: 30_000 }, () => {
 // snow-capped peaks, bright blue sky. (Source: Instagram screenshot)
 describe("mountain.png", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadPng("mountain.png"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadPng("mountain.png"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 2 distinct DMC threads", () => {
+  it("produces at least 2 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(2);
   });
-  it("finds a light/white thread for the snow (L > 0.85)", () => {
+  it("finds a light/white thread for the snow (L > 0.85)", async () => {
     expect(dmcHasLight(dmc, 0.85)).toBe(true);
   });
-  it("finds a blue thread for the sky (hue ~210–260°)", () => {
+  it("finds a blue thread for the sky (hue ~210–260°)", async () => {
     expect(dmcHasHue(dmc, 210, 260, 0.04)).toBe(true);
   });
 });
@@ -166,21 +166,21 @@ describe("mountain.png", { timeout: 30_000 }, () => {
 // grey building wall background.
 describe("flicker.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("flicker.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("flicker.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a warm brown thread for the barred back (hue ~35–75°)", () => {
+  it("finds a warm brown thread for the barred back (hue ~35–75°)", async () => {
     expect(dmcHasHue(dmc, 35, 75, 0.03)).toBe(true);
   });
-  it("finds an orange thread for the tail feathers (hue ~20–60°, high chroma)", () => {
+  it("finds an orange thread for the tail feathers (hue ~20–60°, high chroma)", async () => {
     expect(dmcHasHue(dmc, 20, 60, 0.08)).toBe(true);
   });
-  it("finds a neutral grey/beige thread for the building background", () => {
+  it("finds a neutral grey/beige thread for the building background", async () => {
     expect(dmcHasNeutral(dmc, 0.5, 0.85, 0.07)).toBe(true);
   });
 });
@@ -191,21 +191,21 @@ describe("flicker.jpg", { timeout: 30_000 }, () => {
 // warm brown dead leaves.
 describe("magpie.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("magpie.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("magpie.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a dark/black thread for the body (L < 0.3)", () => {
+  it("finds a dark/black thread for the body (L < 0.3)", async () => {
     expect(dmcHasDark(dmc, 0.3)).toBe(true);
   });
-  it("finds a blue thread for the iridescent tail (hue ~215–270°)", () => {
+  it("finds a blue thread for the iridescent tail (hue ~215–270°)", async () => {
     expect(dmcHasHue(dmc, 215, 270, 0.06)).toBe(true);
   });
-  it("finds a warm brown thread for the leaf litter (hue ~35–75°)", () => {
+  it("finds a warm brown thread for the leaf litter (hue ~35–75°)", async () => {
     expect(dmcHasHue(dmc, 35, 75, 0.03)).toBe(true);
   });
 });
@@ -215,18 +215,18 @@ describe("magpie.jpg", { timeout: 30_000 }, () => {
 // Colors: black cap/bib, white cheeks, grey wings, buff belly, brown branches.
 describe("chickadee.png", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadPng("chickadee.png"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadPng("chickadee.png"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 2 distinct DMC threads", () => {
+  it("produces at least 2 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(2);
   });
-  it("finds a dark/black thread for the cap (L < 0.3)", () => {
+  it("finds a dark/black thread for the cap (L < 0.3)", async () => {
     expect(dmcHasDark(dmc, 0.3)).toBe(true);
   });
-  it("finds a light/neutral thread for the white cheeks or snowy background", () => {
+  it("finds a light/neutral thread for the white cheeks or snowy background", async () => {
     expect(dmcHasLight(dmc, 0.8)).toBe(true);
   });
 });
@@ -236,21 +236,21 @@ describe("chickadee.png", { timeout: 30_000 }, () => {
 // Colors: black back/head, white belly, yellow-orange neck patches, grey-blue ice.
 describe("penguins.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("penguins.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("penguins.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a dark/black thread for the back/head (L < 0.3)", () => {
+  it("finds a dark/black thread for the back/head (L < 0.3)", async () => {
     expect(dmcHasDark(dmc, 0.3)).toBe(true);
   });
-  it("finds a light thread for the white belly (L > 0.8)", () => {
+  it("finds a light thread for the white belly (L > 0.8)", async () => {
     expect(dmcHasLight(dmc, 0.8)).toBe(true);
   });
-  it("finds a cool blue-grey thread for the icy ground (hue ~210–250° or neutral)", () => {
+  it("finds a cool blue-grey thread for the icy ground (hue ~210–250° or neutral)", async () => {
     // The neck patches are too small at 128 px to survive downsampling;
     // the icy ground (~18% of pixels, cool blue-grey) is the third dominant color.
     const hasCoolHue = dmcHasHue(dmc, 210, 250, 0.03);
@@ -265,20 +265,20 @@ describe("penguins.jpg", { timeout: 30_000 }, () => {
 // warm red-brown house siding in background.
 describe("hummingbird.jpg", { timeout: 30_000 }, () => {
   let dmc: DmcColor[];
-  beforeAll(() => {
-    const { hexes } = extractPalette(loadJpeg("hummingbird.jpg"));
+  beforeAll(async () => {
+    const { hexes } = await extractPalette(loadJpeg("hummingbird.jpg"));
     dmc = matchToDmc(hexes);
   });
 
-  it("produces at least 3 distinct DMC threads", () => {
+  it("produces at least 3 distinct DMC threads", async () => {
     expect(dmc.length).toBeGreaterThanOrEqual(3);
   });
-  it("finds a cool neutral/blue thread for the building (hue ~200–260° or low chroma)", () => {
+  it("finds a cool neutral/blue thread for the building (hue ~200–260° or low chroma)", async () => {
     const hasCoolHue = dmcHasHue(dmc, 200, 260, 0.03);
     const hasCoolNeutral = dmcHasNeutral(dmc, 0.4, 0.85, 0.07);
     expect(hasCoolHue || hasCoolNeutral).toBe(true);
   });
-  it("finds a red or warm thread for the feeder/siding (hue ~5–45°)", () => {
+  it("finds a red or warm thread for the feeder/siding (hue ~5–45°)", async () => {
     expect(dmcHasHue(dmc, 5, 45, 0.06)).toBe(true);
   });
 });

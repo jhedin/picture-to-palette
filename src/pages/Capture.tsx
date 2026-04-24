@@ -13,7 +13,7 @@ import {
   IonToolbar,
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
-import { extractPalette, suggestCrop, type CropBox, type DebugData, type ExtractionOptions, DEFAULT_OPTIONS } from "../lib/mean-shift.worker";
+import { extractPalette, suggestCrop, type CropBox, type DebugData, type ExtractionOptions, type SegmentMethod, DEFAULT_OPTIONS } from "../lib/mean-shift.worker";
 import { hexToOklab, oklabToHex } from "../lib/color";
 import { usePalette } from "../lib/palette-store";
 import { CropOverlay } from "../components/CropOverlay";
@@ -86,7 +86,7 @@ export default function Capture() {
     if (!imageDataRef.current) return;
     setStatus("extracting");
     try {
-      const { hexes, debug } = extractPalette(imageDataRef.current, crop, options);
+      const { hexes, debug } = await extractPalette(imageDataRef.current, crop, options);
       if (hexes.length === 0) {
         setStatus("error");
         setErrorMsg("Couldn't find distinct colors in this region");
@@ -328,6 +328,93 @@ export default function Capture() {
                 >
                   Reset to defaults
                 </IonButton>
+
+                {/* ── Segmentation method ─────────────────────────────── */}
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 500, margin: "0 0 4px" }}>Segmentation method</p>
+                  <select
+                    value={options.segmentMethod}
+                    onChange={(e) => setOptions((o) => ({ ...o, segmentMethod: e.target.value as SegmentMethod }))}
+                    style={{ width: "100%", padding: "6px 8px", fontSize: 13, borderRadius: 6, border: "1px solid var(--ion-color-light-shade, #ccc)", background: "var(--ion-background-color, #fff)", color: "var(--ion-text-color, #000)" }}
+                  >
+                    <option value="slic">SLIC (superpixels)</option>
+                    <option value="felzenszwalb">Felzenszwalb (graph boundary)</option>
+                    <option value="spatial-meanshift">Spatial mean-shift (EDISON)</option>
+                    <option value="spatial-kmeans">Spatial K-means</option>
+                    <option value="sam">SAM / Panoptic (downloads ~80 MB)</option>
+                  </select>
+                  <p style={{ fontSize: 11, color: "var(--ion-color-medium)", margin: "4px 0 0" }}>
+                    {options.segmentMethod === "slic" && "Grid superpixels — fast, balanced"}
+                    {options.segmentMethod === "felzenszwalb" && "Graph-based — large natural regions that follow object boundaries"}
+                    {options.segmentMethod === "spatial-meanshift" && "5D mean-shift — spatially coherent, follows gradual color transitions"}
+                    {options.segmentMethod === "spatial-kmeans" && "Joint spatial+color K-means — compact regions with strong color identity"}
+                    {options.segmentMethod === "sam" && "ML panoptic segmentation — best boundary quality, first run downloads model weights"}
+                  </p>
+                </div>
+
+                {options.segmentMethod === "felzenszwalb" && (<>
+                  <ExtractionSlider
+                    label="Region scale (k)"
+                    hint="Higher = larger regions — 300–700 good for wool balls"
+                    value={options.fhK}
+                    min={100} max={2000} step={50}
+                    ticks={[100, 300, 500, 1000, 2000]}
+                    format={(v) => String(v)}
+                    onChange={(v) => setOptions((o) => ({ ...o, fhK: v }))}
+                  />
+                  <ExtractionSlider
+                    label="Min region size"
+                    hint="Regions smaller than this are merged into neighbors"
+                    value={options.fhMinSize}
+                    min={50} max={2000} step={50}
+                    ticks={[50, 200, 500, 1000, 2000]}
+                    format={(v) => `${v} px`}
+                    onChange={(v) => setOptions((o) => ({ ...o, fhMinSize: v }))}
+                  />
+                </>)}
+
+                {options.segmentMethod === "spatial-meanshift" && (<>
+                  <ExtractionSlider
+                    label="Spatial bandwidth"
+                    hint="Kernel radius in pixels — larger = bigger, smoother regions"
+                    value={options.spatialBandwidth}
+                    min={4} max={64} step={4}
+                    ticks={[4, 8, 16, 32, 64]}
+                    format={(v) => `${v} px`}
+                    onChange={(v) => setOptions((o) => ({ ...o, spatialBandwidth: v }))}
+                  />
+                  <ExtractionSlider
+                    label="Color bandwidth"
+                    hint="OKLab radius — larger = more colors merged per region"
+                    value={options.colorBandwidth}
+                    min={0.05} max={0.30} step={0.01}
+                    ticks={[0.05, 0.10, 0.12, 0.20, 0.30]}
+                    format={(v) => v.toFixed(2)}
+                    onChange={(v) => setOptions((o) => ({ ...o, colorBandwidth: v }))}
+                  />
+                </>)}
+
+                {options.segmentMethod === "spatial-kmeans" && (
+                  <ExtractionSlider
+                    label="Number of regions (k)"
+                    hint="Target number of spatial clusters"
+                    value={options.kmeansK}
+                    min={5} max={50} step={1}
+                    ticks={[5, 10, 15, 20, 30, 50]}
+                    format={(v) => String(v)}
+                    onChange={(v) => setOptions((o) => ({ ...o, kmeansK: v }))}
+                  />
+                )}
+
+                <ExtractionSlider
+                  label="Region merge threshold"
+                  hint="Collapse adjacent regions with similar colors after segmentation — 0 = off"
+                  value={options.ragMergeThreshold}
+                  min={0} max={0.30} step={0.01}
+                  ticks={[0, 0.05, 0.10, 0.15, 0.20, 0.30]}
+                  format={(v) => v === 0 ? "off" : v.toFixed(2)}
+                  onChange={(v) => setOptions((o) => ({ ...o, ragMergeThreshold: v }))}
+                />
               </div>
             )}
           </>
