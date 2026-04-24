@@ -65,3 +65,7 @@ export const IonRange = ({
 
 export const IonRouterOutlet = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
 export const IonReactRouter = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
+export const IonButtons = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
+export const IonBackButton = ({ text, defaultHref: _defaultHref }: { text?: string; defaultHref?: string }) => (
+  <button type="button">{text ?? "Back"}</button>
+);

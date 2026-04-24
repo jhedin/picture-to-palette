@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,21 +10,30 @@ vi.mock("../lib/gradient-canvas", () => ({
   renderGradientPng: vi.fn(async () => "data:image/png;base64,FAKE"),
 }));
 
-function Seeder({ hexes, anchors }: { hexes: string[]; anchors: [number, number] }) {
-  const { state, dispatch } = usePalette();
-  const seeded = useRef(false);
-  if (!seeded.current) {
-    seeded.current = true;
+// Seeds the palette store via effects so state settles before Gradients' effects run.
+function Seeder({
+  hexes,
+  anchors,
+}: {
+  hexes: string[];
+  anchors?: [number, number];
+}) {
+  const { dispatch } = usePalette();
+  useEffect(() => {
     for (const h of hexes) dispatch({ type: "ADD_COLOR", hex: h });
-  }
-  if (state.colors.length > 0 && state.anchorA === null) {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const { state } = usePalette();
+  useEffect(() => {
+    if (!anchors || state.colors.length < 2 || state.anchorA !== null) return;
     dispatch({ type: "TAP_SWATCH", id: state.colors[anchors[0]].id });
     dispatch({ type: "TAP_SWATCH", id: state.colors[anchors[1]].id });
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.colors.length]);
   return null;
 }
 
-function renderGradients(hexes: string[], anchors: [number, number]) {
+function renderGradients(hexes: string[], anchors?: [number, number]) {
   return render(
     <MemoryRouter>
       <PaletteProvider>
@@ -36,31 +45,7 @@ function renderGradients(hexes: string[], anchors: [number, number]) {
 }
 
 describe("Gradients page", () => {
-  it("shows inbetween count when both anchors are set", async () => {
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
-    await waitFor(() => {
-      expect(
-        screen.getByText(/between your anchors|No palette colours fall/i),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("Save PNG button is enabled when gradient has colours", async () => {
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /save png/i })).not.toBeDisabled(),
-    );
-  });
-
-  it("clicking Save PNG calls renderGradientPng", async () => {
-    const mod = await import("../lib/gradient-canvas");
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getByRole("button", { name: /save png/i }));
-    await userEvent.click(screen.getByRole("button", { name: /save png/i }));
-    await waitFor(() => expect(mod.renderGradientPng).toHaveBeenCalled());
-  });
-
-  it("shows fallback when no anchors are set", () => {
+  it("shows empty-state help when no colors exist", () => {
     render(
       <MemoryRouter>
         <PaletteProvider>
@@ -68,45 +53,75 @@ describe("Gradients page", () => {
         </PaletteProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByText(/pick two anchors/i)).toBeInTheDocument();
+    expect(screen.getByText(/capture screen/i)).toBeInTheDocument();
   });
 
-  it("renders L: and C: labels for each swatch in the gradient", async () => {
-    // Red → purple → blue: purple is inbetween in natural mode
-    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+  it("shows the palette shelf when colors exist", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
     await waitFor(() => {
-      const lLabels = screen.getAllByText(/L:/);
-      expect(lLabels.length).toBeGreaterThanOrEqual(2); // at least the two anchors
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument();
     });
   });
 
-  it("tapping an inbetween swatch moves it to the excluded row", async () => {
-    // Red anchor, purple inbetween, blue anchor
-    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
-    const swatches = screen.getAllByRole("button", { name: /gradient candidate/i });
-    const inbetweenSwatch = swatches[0];
-    if (inbetweenSwatch) {
-      await userEvent.click(inbetweenSwatch);
-      await waitFor(() =>
-        expect(screen.getByText(/excluded/i)).toBeInTheDocument(),
-      );
-    }
+  it("tapping a shelf color adds it to the sequence", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
   });
 
-  it("tapping an excluded swatch restores it to the gradient", async () => {
+  it("pre-populates sequence from anchorA and anchorB", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
+    });
+  });
+
+  it("+ button appears between two sequence items and shows candidates", async () => {
+    // Red → purple → blue: purple is between in natural mode
     renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
-    const swatches = screen.getAllByRole("button", { name: /gradient candidate/i });
-    const inbetweenSwatch = swatches[0];
-    if (inbetweenSwatch) {
-      await userEvent.click(inbetweenSwatch);
-      await waitFor(() => screen.getByText(/excluded/i));
-      const restoreBtn = screen.getByRole("button", { name: /restore/i });
-      await userEvent.click(restoreBtn);
-      await waitFor(() =>
-        expect(screen.queryByText(/excluded/i)).not.toBeInTheDocument(),
-      );
-    }
+    await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
+    await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /insert #8000FF/i })).toBeInTheDocument(),
+    );
+  });
+
+  it("inserting a candidate adds it to the sequence", async () => {
+    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
+    await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
+    await waitFor(() => screen.getByRole("button", { name: /insert #8000FF/i }));
+    await userEvent.click(screen.getByRole("button", { name: /insert #8000FF/i }));
+    expect(screen.getByRole("button", { name: /remove #8000FF from sequence/i })).toBeInTheDocument();
+  });
+
+  it("removing a sequence item makes it available on the shelf again", async () => {
+    renderGradients(["#FF0000", "#0000FF"], [0, 1]);
+    await waitFor(() => screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeDisabled(),
+    );
+  });
+
+  it("Save PNG is disabled with fewer than 2 sequence items", async () => {
+    renderGradients(["#FF0000", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /save png/i }));
+    expect(screen.getByRole("button", { name: /save png/i })).toBeDisabled();
+    // Add one color
+    await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    expect(screen.getByRole("button", { name: /save png/i })).toBeDisabled();
+  });
+
+  it("Save PNG is enabled with 2+ sequence items and calls renderGradientPng", async () => {
+    const mod = await import("../lib/gradient-canvas");
+    renderGradients(["#FF0000", "#0000FF"], [0, 1]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save png/i })).not.toBeDisabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /save png/i }));
+    await waitFor(() => expect(mod.renderGradientPng).toHaveBeenCalled());
   });
 });

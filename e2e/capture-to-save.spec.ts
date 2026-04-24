@@ -29,21 +29,19 @@ test("full flow: capture → pick anchors → generate → save", async ({ page 
   await page.getByRole("button", { name: /next → palette/i }).click();
   await expect(page).toHaveURL(/\/palette$/);
 
-  // Pick two anchors (first two swatches).
+  // Move to Palette and pick two anchors (first two swatches).
   const swatches = page.getByRole("button", { name: /swatch #/i });
   const count = await swatches.count();
   expect(count).toBeGreaterThanOrEqual(2);
   await swatches.nth(0).click();
   await swatches.nth(1).click();
 
-  // Generate.
+  // Navigate to Gradients.
   await page.getByRole("button", { name: /generate gradients/i }).click();
   await expect(page).toHaveURL(/\/gradients$/);
 
-  // Pick the first candidate.
-  const candidates = page.getByRole("button", { name: /gradient candidate/i });
-  await expect(candidates.first()).toBeVisible();
-  await candidates.first().click();
+  // Sequence is pre-seeded from the two anchors — Save PNG should be enabled.
+  await expect(page.getByRole("button", { name: /save png/i })).toBeEnabled({ timeout: 5_000 });
 
   // Save and assert a download fired.
   await page.getByRole("button", { name: /save png/i }).click();

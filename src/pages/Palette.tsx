@@ -1,5 +1,7 @@
 import {
+  IonBackButton,
   IonButton,
+  IonButtons,
   IonContent,
   IonHeader,
   IonPage,
@@ -14,20 +16,46 @@ export default function Palette() {
   const { state, dispatch } = usePalette();
   const history = useHistory();
 
-  const canGenerate = state.anchorA !== null && state.anchorB !== null;
+  const canGenerate = state.colors.length >= 2;
+
+  if (state.colors.length === 0) {
+    return (
+      <IonPage>
+        <IonHeader>
+          <IonToolbar>
+            <IonButtons slot="start">
+              <IonBackButton defaultHref="/capture" text="Back" />
+            </IonButtons>
+            <IonTitle>Palette</IonTitle>
+          </IonToolbar>
+        </IonHeader>
+        <IonContent className="ion-padding">
+          <IonText>
+            <p>No colors in your palette yet. Go back to Capture and extract some colors first.</p>
+          </IonText>
+          <IonButton expand="block" onClick={() => history.push("/capture")}>
+            Go to Capture
+          </IonButton>
+        </IonContent>
+      </IonPage>
+    );
+  }
 
   return (
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          <IonButtons slot="start">
+            <IonBackButton defaultHref="/capture" text="Back" />
+          </IonButtons>
           <IonTitle>Palette</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
         <IonText>
           <p>
-            Tap two colors to pick anchors. {state.colors.length} color
-            {state.colors.length === 1 ? "" : "s"} in palette.
+            {state.colors.length} color{state.colors.length === 1 ? "" : "s"}.
+            {" "}Tap two to set gradient anchors (optional).
           </p>
         </IonText>
 
@@ -107,8 +135,8 @@ export default function Palette() {
                     height: 22,
                     borderRadius: "50%",
                     border: "none",
-                    background: "#000a",
-                    color: "white",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "var(--ion-background-color, #fff)",
                     cursor: "pointer",
                   }}
                 >
@@ -125,6 +153,13 @@ export default function Palette() {
           disabled={!canGenerate}
         >
           Generate gradients
+        </IonButton>
+        <IonButton
+          fill="outline"
+          expand="block"
+          onClick={() => history.push("/dmc")}
+        >
+          Match DMC threads
         </IonButton>
         <IonButton
           fill="outline"

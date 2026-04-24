@@ -4,6 +4,7 @@ import { Redirect, Route } from "react-router-dom";
 import Capture from "./pages/Capture";
 import Palette from "./pages/Palette";
 import Gradients from "./pages/Gradients";
+import Dmc from "./pages/Dmc";
 import { PaletteProvider } from "./lib/palette-store";
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
           <IonRouterOutlet>
             <Route exact path="/capture" component={Capture} />
             <Route exact path="/palette" component={Palette} />
+            <Route exact path="/dmc" component={Dmc} />
             <Route exact path="/gradients" component={Gradients} />
             <Route exact path="/">
               <Redirect to="/capture" />

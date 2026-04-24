@@ -6,6 +6,9 @@ import {
   type ReactNode,
 } from "react";
 import { normalizeHex, deltaE00 } from "./color";
+import type { DmcColor } from "./dmc-colors";
+
+export type { DmcColor };
 
 export interface PaletteEntry {
   id: string;
@@ -16,12 +19,16 @@ export interface PaletteState {
   colors: PaletteEntry[];
   anchorA: string | null;
   anchorB: string | null;
+  dmcSet: DmcColor[];
 }
 
 export type PaletteAction =
   | { type: "ADD_COLOR"; hex: string }
   | { type: "REMOVE_COLOR"; id: string }
   | { type: "TAP_SWATCH"; id: string }
+  | { type: "SET_DMC_SET"; colors: DmcColor[] }
+  | { type: "ADD_DMC"; color: DmcColor }
+  | { type: "REMOVE_DMC"; id: string }
   | { type: "RESET" };
 
 const DEDUP_THRESHOLD = 3;
@@ -33,7 +40,7 @@ function makeId(): string {
 }
 
 export function initialPaletteState(): PaletteState {
-  return { colors: [], anchorA: null, anchorB: null };
+  return { colors: [], anchorA: null, anchorB: null, dmcSet: [] };
 }
 
 export function paletteReducer(
@@ -56,6 +63,7 @@ export function paletteReducer(
 
     case "REMOVE_COLOR": {
       return {
+        ...state,
         colors: state.colors.filter((c) => c.id !== action.id),
         anchorA: state.anchorA === action.id ? null : state.anchorA,
         anchorB: state.anchorB === action.id ? null : state.anchorB,
@@ -86,6 +94,18 @@ export function paletteReducer(
       // Third tap → A drops, B promotes to A, new id is B
       return { ...state, anchorA: anchorB, anchorB: id };
     }
+
+    case "SET_DMC_SET":
+      return { ...state, dmcSet: action.colors };
+
+    case "ADD_DMC": {
+      const already = state.dmcSet.some((d) => d.id === action.color.id);
+      if (already) return state;
+      return { ...state, dmcSet: [...state.dmcSet, action.color] };
+    }
+
+    case "REMOVE_DMC":
+      return { ...state, dmcSet: state.dmcSet.filter((d) => d.id !== action.id) };
 
     case "RESET":
       return initialPaletteState();

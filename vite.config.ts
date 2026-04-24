@@ -2,9 +2,16 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
+import { execSync } from "node:child_process";
+
+const gitSha = (() => {
+  try { return execSync("git rev-parse --short HEAD").toString().trim(); }
+  catch { return "dev"; }
+})();
 
 export default defineConfig({
   base: "/picture-to-palette/",
+  define: { __GIT_SHA__: JSON.stringify(gitSha) },
   plugins: [
     react(),
     VitePWA({
