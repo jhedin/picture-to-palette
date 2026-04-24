@@ -12,7 +12,13 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
-import { gradientBetween, pickEvenly, type GradientMode } from "../lib/color";
+import {
+  gradientBetween,
+  pickEvenly,
+  swatchMeta,
+  scoreGradientOutliers,
+  type GradientMode,
+} from "../lib/color";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 export default function Gradients() {
@@ -20,19 +26,30 @@ export default function Gradients() {
   const history = useHistory();
   const [mode, setMode] = useState<GradientMode>("natural");
   const [count, setCount] = useState(1);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const anchorA = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
   const anchorB = state.colors.find((c) => c.id === state.anchorB)?.hex ?? null;
   const paletteHexes = state.colors.map((c) => c.hex);
 
-  // Build the gradient sequence: anchorA → inbetween palette colours → anchorB.
-  // Only palette colours that project strictly between the two anchors in OKLab
-  // are included — colours that fall outside the A–B segment are excluded.
   const inbetween = useMemo(() => {
+    if (!anchorA || !anchorB) return [];
+    return gradientBetween(paletteHexes, anchorA, anchorB, mode)
+      .filter((h) => !excluded.has(h));
+  }, [anchorA, anchorB, paletteHexes, mode, excluded]);
+
+  // Full candidate list (before exclusions) so excluded swatches can be shown
+  // in a re-include row.
+  const allCandidates = useMemo(() => {
     if (!anchorA || !anchorB) return [];
     return gradientBetween(paletteHexes, anchorA, anchorB, mode);
   }, [anchorA, anchorB, paletteHexes, mode]);
+
+  const excludedCandidates = useMemo(
+    () => allCandidates.filter((h) => excluded.has(h)),
+    [allCandidates, excluded],
+  );
 
   const picked = useMemo(() => pickEvenly(inbetween, count), [inbetween, count]);
 
@@ -41,11 +58,27 @@ export default function Gradients() {
     [anchorA, anchorB, picked],
   );
 
-  // Reset saved message and count when anchors or mode change.
+  const metas = useMemo(() => gradient.map(swatchMeta), [gradient]);
+
+  const outlierMap = useMemo(() => {
+    const results = scoreGradientOutliers(gradient);
+    return new Map(results.map((r) => [r.hex, r.isOutlier]));
+  }, [gradient]);
+
+  // Reset on anchor/mode change.
   useEffect(() => {
     setSavedMsg(null);
     setCount(1);
+    setExcluded(new Set());
   }, [state.anchorA, state.anchorB, mode]);
+
+  function toggleExclude(hex: string) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      next.has(hex) ? next.delete(hex) : next.add(hex);
+      return next;
+    });
+  }
 
   async function handleSave() {
     if (gradient.length === 0) return;
@@ -136,25 +169,89 @@ export default function Gradients() {
           </div>
         )}
 
-        {/* Solid colour blocks — equal width, no blending */}
+        {/* Gradient strip with L/C readout and tap-to-exclude */}
         <div
           style={{
             display: "flex",
-            height: 80,
             borderRadius: 10,
             overflow: "hidden",
             border: "1px solid rgba(0,0,0,0.12)",
-            marginBottom: 16,
+            marginBottom: 12,
           }}
         >
-          {gradient.map((hex) => (
-            <div
-              key={hex}
-              style={{ flex: 1, background: hex }}
-              title={hex}
-            />
-          ))}
+          {gradient.map((hex, i) => {
+            const meta = metas[i];
+            const isAnchor = i === 0 || i === gradient.length - 1;
+            const isOutlier = outlierMap.get(hex) ?? false;
+            return (
+              <div
+                key={`${hex}-${i}`}
+                role={isAnchor ? undefined : "button"}
+                aria-label={isAnchor ? undefined : hex}
+                data-outlier={isOutlier ? "true" : undefined}
+                onClick={isAnchor ? undefined : () => toggleExclude(hex)}
+                style={{
+                  flex: 1,
+                  background: hex,
+                  height: 80,
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "flex-end",
+                  cursor: isAnchor ? "default" : "pointer",
+                  outline: isOutlier ? "2px solid #f59e0b" : undefined,
+                  outlineOffset: -2,
+                }}
+                title={hex}
+              >
+                <div
+                  style={{
+                    background: "rgba(0,0,0,0.45)",
+                    color: "#fff",
+                    fontSize: 9,
+                    textAlign: "center",
+                    padding: "1px 0",
+                    lineHeight: 1.2,
+                    pointerEvents: "none",
+                  }}
+                >
+                  <div>L:{meta.L.toFixed(2)}</div>
+                  <div>C:{meta.C.toFixed(3)}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
+
+        {/* Excluded candidates — tap to re-include */}
+        {excludedCandidates.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <IonText>
+              <p style={{ margin: "0 0 4px", fontSize: 12, opacity: 0.6 }}>
+                Excluded — tap to restore:
+              </p>
+            </IonText>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {excludedCandidates.map((hex) => (
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => toggleExclude(hex)}
+                  aria-label={`restore ${hex}`}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    background: hex,
+                    border: "2px solid rgba(0,0,0,0.25)",
+                    opacity: 0.5,
+                    cursor: "pointer",
+                  }}
+                  title={hex}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <IonButton expand="block" onClick={handleSave} disabled={gradient.length === 0}>
           Save PNG

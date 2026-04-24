@@ -37,8 +37,6 @@ function renderGradients(hexes: string[], anchors: [number, number]) {
 
 describe("Gradients page", () => {
   it("shows inbetween count when both anchors are set", async () => {
-    // Red anchor, blue anchor, green in palette — green won't be between red & blue
-    // but at minimum the UI should render without error.
     renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
     await waitFor(() => {
       expect(
@@ -71,5 +69,51 @@ describe("Gradients page", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/pick two anchors/i)).toBeInTheDocument();
+  });
+
+  it("renders L: and C: labels for each swatch in the gradient", async () => {
+    // Red → purple → blue: purple is inbetween in natural mode
+    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => {
+      const lLabels = screen.getAllByText(/L:/);
+      expect(lLabels.length).toBeGreaterThanOrEqual(2); // at least the two anchors
+    });
+  });
+
+  it("tapping an inbetween swatch moves it to the excluded row", async () => {
+    // Red anchor, purple inbetween, blue anchor
+    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getAllByRole("button", { name: /^#/i }));
+    const swatches = screen.getAllByRole("button", { name: /^#/i });
+    // Find an inbetween swatch (not Save PNG, not mode buttons)
+    const inbetweenSwatch = swatches.find((el) =>
+      el.getAttribute("aria-label")?.startsWith("#") &&
+      !el.getAttribute("aria-label")?.includes(" "),
+    );
+    if (inbetweenSwatch) {
+      await userEvent.click(inbetweenSwatch);
+      await waitFor(() =>
+        expect(screen.getByText(/excluded/i)).toBeInTheDocument(),
+      );
+    }
+  });
+
+  it("tapping an excluded swatch restores it to the gradient", async () => {
+    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getAllByRole("button", { name: /^#/i }));
+    const swatches = screen.getAllByRole("button", { name: /^#/i });
+    const inbetweenSwatch = swatches.find((el) =>
+      el.getAttribute("aria-label")?.startsWith("#") &&
+      !el.getAttribute("aria-label")?.includes(" "),
+    );
+    if (inbetweenSwatch) {
+      await userEvent.click(inbetweenSwatch);
+      await waitFor(() => screen.getByText(/excluded/i));
+      const restoreBtn = screen.getByRole("button", { name: /restore/i });
+      await userEvent.click(restoreBtn);
+      await waitFor(() =>
+        expect(screen.queryByText(/excluded/i)).not.toBeInTheDocument(),
+      );
+    }
   });
 });

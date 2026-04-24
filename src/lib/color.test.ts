@@ -8,6 +8,8 @@ import {
   dedupByDeltaE,
   gradientBetween,
   pickEvenly,
+  swatchMeta,
+  scoreGradientOutliers,
   type Oklab,
 } from "./color";
 
@@ -244,5 +246,64 @@ describe("pickEvenly", () => {
       const result = pickEvenly(LIST, n);
       expect(new Set(result).size).toBe(result.length);
     }
+  });
+});
+
+describe("gradientBetween — natural mode perpendicular filter", () => {
+  const A = "#FF0000"; // red
+  const B = "#0000FF"; // blue
+
+  it("keeps a colour close to the A→B line", () => {
+    // Purple is near the red→blue OKLab segment
+    const result = gradientBetween([A, B, "#8000FF"], A, B, "natural");
+    expect(result).toContain("#8000FF");
+  });
+
+  it("excludes a colour far off the A→B line even if t ∈ (0,1)", () => {
+    // Bright yellow-green projects between red and blue in t but is far off-axis
+    const result = gradientBetween([A, B, "#80FF00"], A, B, "natural");
+    expect(result).not.toContain("#80FF00");
+  });
+});
+
+describe("swatchMeta", () => {
+  it("returns L and C rounded to display precision", () => {
+    const meta = swatchMeta("#FF0000");
+    expect(meta.hex).toBe("#FF0000");
+    expect(meta.L).toBeCloseTo(0.63, 1);
+    expect(meta.C).toBeGreaterThan(0.2);
+  });
+
+  it("returns C=0 for achromatic grey", () => {
+    const meta = swatchMeta("#808080");
+    expect(meta.C).toBeCloseTo(0, 2);
+  });
+});
+
+describe("scoreGradientOutliers", () => {
+  it("returns no outliers for a monotone grey gradient", () => {
+    const gradient = ["#000000", "#404040", "#808080", "#C0C0C0", "#FFFFFF"];
+    const results = scoreGradientOutliers(gradient);
+    expect(results.every((r) => !r.isOutlier)).toBe(true);
+  });
+
+  it("flags a brightness interloper in an otherwise dark gradient", () => {
+    // Dark → dark → very bright → dark → dark — the bright one should be flagged
+    const gradient = ["#111111", "#222222", "#FFFFFF", "#333333", "#444444"];
+    const results = scoreGradientOutliers(gradient);
+    const outlier = results.find((r) => r.hex === "#FFFFFF");
+    expect(outlier?.isOutlier).toBe(true);
+  });
+
+  it("never flags the anchor endpoints", () => {
+    const gradient = ["#FF0000", "#808080", "#0000FF"];
+    const results = scoreGradientOutliers(gradient);
+    expect(results[0].isOutlier).toBe(false);
+    expect(results[results.length - 1].isOutlier).toBe(false);
+  });
+
+  it("returns all non-outliers for gradients with fewer than 3 colours", () => {
+    expect(scoreGradientOutliers(["#FF0000", "#0000FF"]).every((r) => !r.isOutlier)).toBe(true);
+    expect(scoreGradientOutliers(["#FF0000"]).every((r) => !r.isOutlier)).toBe(true);
   });
 });
