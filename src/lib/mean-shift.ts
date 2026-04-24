@@ -25,7 +25,7 @@ export function estimateBandwidth(points: Point3[], quantile = 0.3): number {
   }
   distances.sort((a, b) => a - b);
   const idx = Math.max(0, Math.min(distances.length - 1, Math.floor(distances.length * quantile)));
-  return distances[idx] || 1;
+  return distances[idx];
 }
 
 function sampleN<T>(arr: T[], n: number): T[] {
