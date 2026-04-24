@@ -123,7 +123,7 @@ export default function Capture() {
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Capture</IonTitle>
+          <IonTitle>Capture <span style={{ fontSize: 11, opacity: 0.5, fontWeight: 400 }}>({__GIT_SHA__})</span></IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
