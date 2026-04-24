@@ -7,6 +7,7 @@ import { felzenszwalb } from "./felzenszwalb";
 import { spatialMeanShift } from "./spatial-meanshift";
 import { spatialKMeansSegmentation } from "./sam-segmentation";
 import { ragMerge } from "./rag-merge";
+import { gaussianBlur } from "./gaussian-blur";
 
 export type SegmentMethod = "slic" | "felzenszwalb" | "spatial-meanshift" | "spatial-kmeans" | "sam";
 
@@ -97,6 +98,11 @@ export interface ExtractionOptions {
 
   // Spatial K-means parameters
   kmeansK: number;  // number of clusters. default 20
+
+  /** Gaussian pre-blur sigma applied after resize (and after Kuwahara if enabled).
+   *  Smooths yarn fiber texture so segmenters find ball-level color boundaries
+   *  rather than per-fiber highlights.  0 = disabled. */
+  preBlurSigma: number; // default 0
 }
 
 export const DEFAULT_OPTIONS: ExtractionOptions = {
@@ -115,6 +121,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   spatialBandwidth: 16,
   colorBandwidth: 0.12,
   kmeansK: 20,
+  preBlurSigma: 0,
 };
 
 export interface ExtractResult {
@@ -255,11 +262,12 @@ export async function extractPalette(
     segmentMethod, ragMergeThreshold,
     fhK, fhMinSize,
     spatialBandwidth, colorBandwidth,
-    kmeansK,
+    kmeansK, preBlurSigma,
   } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const capped = capSize(source);
-  const sized = kuwahara ? kuwaharaFilter(capped) : capped;
+  const afterKuwahara = kuwahara ? kuwaharaFilter(capped) : capped;
+  const sized = preBlurSigma > 0 ? gaussianBlur(afterKuwahara, preBlurSigma) : afterKuwahara;
   const W = sized.width, H = sized.height, N = W * H;
 
   // Pre-convert all pixels to OKLab once (SLIC and mean-shift both need it).
