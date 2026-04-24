@@ -112,8 +112,6 @@ describe("gradientBetween", () => {
   it("returns only colours that project strictly between the anchors", () => {
     const result = gradientBetween([A, B, PURPLE, GREEN], A, B);
     expect(result).toContain("#8000FF");
-    // Green is far off the red–blue axis and likely projects outside (0,1)
-    // (exact value depends on OKLab geometry; at minimum anchors are excluded)
     expect(result).not.toContain("#FF0000");
     expect(result).not.toContain("#0000FF");
   });
@@ -128,17 +126,81 @@ describe("gradientBetween", () => {
     expect(gradientBetween([A, B], A, B)).toEqual([]);
   });
 
-  it("returns colours sorted from A toward B", () => {
-    const NEAR_A = "#EE1100"; // projects near t≈0
-    const result = gradientBetween([A, B, PURPLE, NEAR_A], A, B);
-    const iNearA = result.findIndex(h => h === normalizeHex(NEAR_A));
-    const iPurple = result.findIndex(h => h === "#8000FF");
-    if (iNearA >= 0 && iPurple >= 0) {
-      expect(iNearA).toBeLessThan(iPurple);
-    }
-  });
-
   it("handles degenerate A==B without crashing", () => {
     expect(() => gradientBetween([A, B, PURPLE], A, A)).not.toThrow();
+  });
+
+  describe("mode: natural", () => {
+    it("sorts by OKLab projection — closer-to-A colours come first", () => {
+      const NEAR_A = "#EE1100";
+      const result = gradientBetween([B, PURPLE, NEAR_A, A], A, B, "natural");
+      const iNearA = result.findIndex(h => h === normalizeHex(NEAR_A));
+      const iPurple = result.findIndex(h => h === "#8000FF");
+      if (iNearA >= 0 && iPurple >= 0) expect(iNearA).toBeLessThan(iPurple);
+    });
+  });
+
+  describe("mode: lightness", () => {
+    // Dark anchor → light anchor: inbetweens sorted dark first.
+    // Use black→white with a mid-grey inbetween.
+    const DARK = "#000000";
+    const LIGHT = "#FFFFFF";
+    const MID_GREY = "#808080";
+    const LIGHT_GREY = "#C0C0C0";
+
+    it("sorts ascending when anchorA is darker than anchorB", () => {
+      const result = gradientBetween([DARK, LIGHT, LIGHT_GREY, MID_GREY], DARK, LIGHT, "lightness");
+      expect(result.length).toBeGreaterThan(0);
+      // mid-grey (darker) should come before light-grey (lighter)
+      const iMid = result.findIndex(h => h === normalizeHex(MID_GREY));
+      const iLight = result.findIndex(h => h === normalizeHex(LIGHT_GREY));
+      if (iMid >= 0 && iLight >= 0) expect(iMid).toBeLessThan(iLight);
+    });
+
+    it("sorts descending when anchorA is lighter than anchorB", () => {
+      const result = gradientBetween([DARK, LIGHT, LIGHT_GREY, MID_GREY], LIGHT, DARK, "lightness");
+      expect(result.length).toBeGreaterThan(0);
+      // light-grey (lighter) should now come before mid-grey (darker)
+      const iLight = result.findIndex(h => h === normalizeHex(LIGHT_GREY));
+      const iMid = result.findIndex(h => h === normalizeHex(MID_GREY));
+      if (iLight >= 0 && iMid >= 0) expect(iLight).toBeLessThan(iMid);
+    });
+  });
+
+  describe("mode: saturation", () => {
+    // Desaturated anchor (#808080 grey) → saturated anchor (#FF0000 red).
+    // Inbetweens should be sorted from low chroma to high.
+    const GREY = "#808080";
+    const RED = "#FF0000";
+    const PINK = "#FF8080";    // moderate chroma
+    const ROSE = "#FF4040";    // higher chroma, closer to RED
+
+    it("sorts from low to high chroma when anchorA is less saturated", () => {
+      const result = gradientBetween([GREY, RED, PINK, ROSE], GREY, RED, "saturation");
+      expect(result.length).toBeGreaterThan(0);
+      const iPink = result.findIndex(h => h === normalizeHex(PINK));
+      const iRose = result.findIndex(h => h === normalizeHex(ROSE));
+      if (iPink >= 0 && iRose >= 0) expect(iPink).toBeLessThan(iRose);
+    });
+  });
+
+  describe("mode: hue", () => {
+    // Red (#FF0000, h≈29°) → Blue (#0000FF, h≈264°).
+    // Shorter arc goes clockwise through purple.
+    // A colour at h≈150° (green-ish) is on the long arc — may be excluded or appear late.
+    // A purple at h≈300° is on the short arc — should appear before blue.
+
+    it("returns results sorted along the shorter hue arc", () => {
+      const result = gradientBetween([A, B, PURPLE], A, B, "hue");
+      // PURPLE (h≈300°) should be between red and blue on the short arc
+      expect(result).toContain("#8000FF");
+    });
+
+    it("all returned colours have t in (0,1) regardless of hue sort", () => {
+      const result = gradientBetween([A, B, PURPLE, GREEN], A, B, "hue");
+      // filter still applies — no anchors and no out-of-range projections
+      expect(result).not.toContain(normalizeHex(A));
+      expect(result).not.toContain(normalizeHex(B));
+    });
   });
 });
