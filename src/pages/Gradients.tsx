@@ -199,9 +199,28 @@ export default function Gradients() {
         </div>
 
         {/* ── Sequence builder ──────────────────────────────────────── */}
-        <ShelfLabel>
-          Sequence{sequence.length > 0 ? ` (${sequence.length})` : ""}
-        </ShelfLabel>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+          <ShelfLabel style={{ margin: 0 }}>
+            Sequence{sequence.length > 0 ? ` (${sequence.length})` : ""}
+          </ShelfLabel>
+          {sequence.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setSequence([]); setInsertAt(null); }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--ion-color-medium)",
+                fontSize: 12,
+                cursor: "pointer",
+                padding: "2px 4px",
+                textDecoration: "underline",
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
         {sequence.length === 0 ? (
           <IonText color="medium">
             <p style={{ fontSize: 13, marginTop: 0 }}>
@@ -385,7 +404,7 @@ export default function Gradients() {
   );
 }
 
-function ShelfLabel({ children }: { children: React.ReactNode }) {
+function ShelfLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <p
       style={{
@@ -395,6 +414,7 @@ function ShelfLabel({ children }: { children: React.ReactNode }) {
         textTransform: "uppercase",
         letterSpacing: 0.5,
         color: "var(--ion-color-medium)",
+        ...style,
       }}
     >
       {children}

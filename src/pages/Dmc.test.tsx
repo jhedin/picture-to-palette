@@ -95,6 +95,19 @@ describe("Dmc page", () => {
     vi.clearAllMocks();
   });
 
+  it("shows empty state when palette has no colors and dmcSet is empty", async () => {
+    await renderDmc([], []);
+    expect(screen.getByText(/your palette is empty/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /go to capture/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /auto-match from palette/i })).not.toBeInTheDocument();
+  });
+
+  it("shows DMC page (not empty state) when dmcSet is populated but palette is empty", async () => {
+    await renderDmc([], [{ id: "321", name: "Red", hex: "#C72B3B" }]);
+    await waitFor(() => screen.getByText(/321/));
+    expect(screen.queryByText(/your palette is empty/i)).not.toBeInTheDocument();
+  });
+
   it("auto-match runs on mount when palette has colors and dmcSet is empty", async () => {
     await renderDmc(["#FF0000", "#00FF00"]);
     await waitFor(() => {
@@ -174,7 +187,8 @@ describe("Dmc page", () => {
   });
 
   it("clicking a search result adds the thread and clears search", async () => {
-    await renderDmc([], []);
+    // Pre-seed a non-666 dmcColor so auto-match doesn't fire (which would add 666 and exclude it from search).
+    await renderDmc(["#FF0000"], [{ id: "321", name: "Red", hex: "#C72B3B" }]);
     const searchInput = screen.getByLabelText("Search DMC threads");
     await userEvent.type(searchInput, "666");
     await waitFor(() => screen.getByLabelText(/Add thread 666/));
@@ -197,7 +211,7 @@ describe("Dmc page", () => {
   });
 
   it("Go to Gradients button is present", async () => {
-    await renderDmc([]);
+    await renderDmc(["#FF0000"]);
     expect(
       screen.getByRole("button", { name: /go to gradients/i }),
     ).toBeInTheDocument();

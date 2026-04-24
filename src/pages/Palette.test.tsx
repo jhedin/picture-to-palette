@@ -45,14 +45,22 @@ describe("Palette page", () => {
     expect(swatches[1]).toHaveAttribute("data-anchor", "B");
   });
 
-  it("Generate gradients is disabled until both anchors chosen", async () => {
+  it("Generate gradients is enabled with two or more colors", () => {
     renderPalette(["#FF0000", "#00FF00"]);
     const btn = screen.getByRole("button", { name: /generate gradients/i });
-    expect(btn).toBeDisabled();
-    const swatches = screen.getAllByRole("button", { name: /swatch #/i });
-    await userEvent.click(swatches[0]);
-    await userEvent.click(swatches[1]);
     expect(btn).not.toBeDisabled();
+  });
+
+  it("Generate gradients is disabled with fewer than two colors", () => {
+    renderPalette(["#FF0000"]);
+    const btn = screen.getByRole("button", { name: /generate gradients/i });
+    expect(btn).toBeDisabled();
+  });
+
+  it("shows empty state with a Go to Capture button when palette is empty", () => {
+    renderPalette([]);
+    expect(screen.getByRole("button", { name: /go to capture/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate gradients/i })).not.toBeInTheDocument();
   });
 
   it("× removes a swatch", async () => {

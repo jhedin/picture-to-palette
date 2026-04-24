@@ -53,6 +53,29 @@ export default function Dmc() {
               d.id.includes(search.trim())),
         ).slice(0, 8);
 
+  if (state.colors.length === 0 && state.dmcSet.length === 0) {
+    return (
+      <IonPage>
+        <IonHeader>
+          <IonToolbar>
+            <IonButtons slot="start">
+              <IonBackButton defaultHref="/palette" text="Palette" />
+            </IonButtons>
+            <IonTitle>DMC Match</IonTitle>
+          </IonToolbar>
+        </IonHeader>
+        <IonContent className="ion-padding">
+          <IonText>
+            <p>Your palette is empty. Extract colors from an image first, then come back here to match DMC threads.</p>
+          </IonText>
+          <IonButton expand="block" onClick={() => history.push("/capture")}>
+            Go to Capture
+          </IonButton>
+        </IonContent>
+      </IonPage>
+    );
+  }
+
   return (
     <IonPage>
       <IonHeader>

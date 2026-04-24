@@ -47,7 +47,7 @@ test("use full image skips crop and extracts", async ({ page }) => {
   expect(chips).toBeGreaterThanOrEqual(2);
 });
 
-test("adjust crop button returns to crop UI from ready state", async ({ page }) => {
+test("re-crop button returns to crop UI from ready state", async ({ page }) => {
   await page.goto("/");
   await page.setInputFiles('input[type="file"]', FIXTURE);
 
@@ -55,7 +55,7 @@ test("adjust crop button returns to crop UI from ready state", async ({ page }) 
   await page.getByRole("button", { name: /extract colors/i }).click();
   await page.waitForSelector('button[aria-label^="Add color #"]', { timeout: 30_000 });
 
-  // "Adjust crop" goes back to crop UI.
-  await page.getByRole("button", { name: /adjust crop/i }).click();
+  // "Re-crop" goes back to crop UI.
+  await page.getByRole("button", { name: /re-crop/i }).click();
   await expect(page.getByRole("button", { name: /extract colors/i })).toBeVisible();
 });
