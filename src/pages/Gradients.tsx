@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   IonButton,
   IonContent,
@@ -28,6 +28,12 @@ export default function Gradients() {
   const anchorA = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
   const anchorB = state.colors.find((c) => c.id === state.anchorB)?.hex ?? null;
   const paletteHexes = state.colors.map((c) => c.hex);
+
+  // Reset selection whenever the anchor pair changes so the Save button
+  // is never enabled with a stale candidate id that no longer exists.
+  useEffect(() => {
+    setSelected(null);
+  }, [state.anchorA, state.anchorB]);
 
   const candidates: Candidate[] = useMemo(() => {
     if (!anchorA || !anchorB) return [];

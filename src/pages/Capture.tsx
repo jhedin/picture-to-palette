@@ -113,6 +113,8 @@ export default function Capture() {
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
+            // Reset so the same file can be selected again on the next upload
+            e.target.value = "";
             if (f) handleFile(f);
           }}
         />
