@@ -11,7 +11,7 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
-import { sortGradient } from "../lib/color";
+import { gradientBetween } from "../lib/color";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 export default function Gradients() {
@@ -23,12 +23,18 @@ export default function Gradients() {
   const anchorB = state.colors.find((c) => c.id === state.anchorB)?.hex ?? null;
   const paletteHexes = state.colors.map((c) => c.hex);
 
-  // Sort all palette colours along the A→B direction in OKLab space.
-  // These are the actual wool colours the user captured — no interpolation.
-  const gradient = useMemo(() => {
+  // Build the gradient sequence: anchorA → inbetween palette colours → anchorB.
+  // Only palette colours that project strictly between the two anchors in OKLab
+  // are included — colours that fall outside the A–B segment are excluded.
+  const inbetween = useMemo(() => {
     if (!anchorA || !anchorB) return [];
-    return sortGradient(paletteHexes, anchorA, anchorB);
+    return gradientBetween(paletteHexes, anchorA, anchorB);
   }, [anchorA, anchorB, paletteHexes]);
+
+  const gradient = useMemo(
+    () => (anchorA && anchorB ? [anchorA, ...inbetween, anchorB] : []),
+    [anchorA, anchorB, inbetween],
+  );
 
   // Reset saved message when anchors change.
   useEffect(() => {
@@ -78,8 +84,9 @@ export default function Gradients() {
       <IonContent className="ion-padding">
         <IonText>
           <p>
-            Your {gradient.length} colours arranged from anchor to anchor.
-            Tap Save to export.
+            {inbetween.length > 0
+              ? `${inbetween.length} colour${inbetween.length !== 1 ? "s" : ""} between your anchors.`
+              : "No palette colours fall between these anchors."}
           </p>
         </IonText>
 

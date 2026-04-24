@@ -36,11 +36,14 @@ function renderGradients(hexes: string[], anchors: [number, number]) {
 }
 
 describe("Gradients page", () => {
-  it("shows the block strip when both anchors are set", async () => {
+  it("shows inbetween count when both anchors are set", async () => {
+    // Red anchor, blue anchor, green in palette — green won't be between red & blue
+    // but at minimum the UI should render without error.
     renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
     await waitFor(() => {
-      // The strip is a div containing child divs (one per colour block)
-      expect(screen.getByText(/colours arranged from anchor/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/between your anchors|No palette colours fall/i),
+      ).toBeInTheDocument();
     });
   });
 

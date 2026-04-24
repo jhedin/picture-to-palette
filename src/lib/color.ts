@@ -62,20 +62,17 @@ export function dedupByDeltaE(hexes: string[], threshold: number): string[] {
   return out;
 }
 
-interface ScoredCandidate {
-  hex: string;
-  t: number; // position along the OKLab path, 0..1
-  perpDist: number; // ΔE-equivalent perpendicular distance to path
-}
-
 /**
- * Sort all palette colors by their projection onto the A→B line in OKLab
- * space, returning them in gradient order from A to B.
- * This is the "Axiom" model: arrange your actual available colours (the
- * wool balls you own) in the order that forms the best gradient — no
- * interpolated colours are invented.
+ * Given two anchor colours, find which palette colours fall *between* them
+ * along the A→B line in OKLab space (projection t strictly in (0, 1)),
+ * sorted from A toward B.
+ *
+ * The full gradient sequence is: [anchorA, ...gradientBetween(...), anchorB]
+ *
+ * Only colours that are genuinely intermediate are returned — colours that
+ * project outside the A–B segment (before A or past B) are excluded.
  */
-export function sortGradient(
+export function gradientBetween(
   palette: string[],
   anchorA: string,
   anchorB: string,
@@ -84,17 +81,21 @@ export function sortGradient(
   const b = hexToOklab(anchorB);
   const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
   const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
-  if (abLenSq === 0) return palette.map(normalizeHex).filter((h): h is string => h !== null);
+  if (abLenSq === 0) return [];
+
+  const normA = normalizeHex(anchorA);
+  const normB = normalizeHex(anchorB);
 
   return palette
     .map(normalizeHex)
-    .filter((h): h is string => h !== null)
+    .filter((h): h is string => h !== null && h !== normA && h !== normB)
     .map((hex) => {
       const p = hexToOklab(hex);
       const ap = { L: p.L - a.L, a: p.a - a.a, b: p.b - a.b };
       const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
       return { hex, t };
     })
+    .filter(({ t }) => t > 0 && t < 1)   // strictly between the anchors
     .sort((x, y) => x.t - y.t)
-    .map((c) => c.hex);
+    .map(({ hex }) => hex);
 }

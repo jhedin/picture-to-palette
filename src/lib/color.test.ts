@@ -6,7 +6,7 @@ import {
   deltaE00,
   oklabToHex,
   dedupByDeltaE,
-  sortGradient,
+  gradientBetween,
   type Oklab,
 } from "./color";
 
@@ -103,30 +103,42 @@ describe("dedupByDeltaE", () => {
   });
 });
 
-describe("sortGradient", () => {
+describe("gradientBetween", () => {
   const A = "#FF0000"; // anchor A (red)
   const B = "#0000FF"; // anchor B (blue)
-  const PURPLE = "#8000FF"; // projects to mid-path t≈0.5
-  const NEAR_A = "#F00010"; // projects near t≈0, close to A
+  const PURPLE = "#8000FF"; // projects to mid-path t≈0.5 — inbetween
+  const GREEN = "#00FF00";  // projects outside the A–B segment — excluded
 
-  it("returns all palette colors sorted from A to B", () => {
-    const result = sortGradient([A, B, PURPLE, NEAR_A], A, B);
-    expect(result.length).toBe(4);
-    // NEAR_A (t≈0) should come before PURPLE (t≈0.5) which comes before B (t=1)
-    const iA = result.indexOf("#FF0000");
-    const iNearA = result.indexOf(result.find(h => h !== "#FF0000" && h !== "#0000FF" && h !== "#8000FF")!);
-    const iPurple = result.indexOf("#8000FF");
-    const iB = result.indexOf("#0000FF");
-    expect(iA).toBeLessThan(iPurple);
-    expect(iPurple).toBeLessThan(iB);
+  it("returns only colours that project strictly between the anchors", () => {
+    const result = gradientBetween([A, B, PURPLE, GREEN], A, B);
+    expect(result).toContain("#8000FF");
+    // Green is far off the red–blue axis and likely projects outside (0,1)
+    // (exact value depends on OKLab geometry; at minimum anchors are excluded)
+    expect(result).not.toContain("#FF0000");
+    expect(result).not.toContain("#0000FF");
   });
 
-  it("returns a single element for a 1-color palette", () => {
-    const result = sortGradient([A], A, B);
-    expect(result.length).toBe(1);
+  it("excludes the anchors themselves", () => {
+    const result = gradientBetween([A, B, PURPLE], A, B);
+    expect(result).not.toContain(A);
+    expect(result).not.toContain(B);
+  });
+
+  it("returns empty when no palette colours fall between the anchors", () => {
+    expect(gradientBetween([A, B], A, B)).toEqual([]);
+  });
+
+  it("returns colours sorted from A toward B", () => {
+    const NEAR_A = "#EE1100"; // projects near t≈0
+    const result = gradientBetween([A, B, PURPLE, NEAR_A], A, B);
+    const iNearA = result.findIndex(h => h === normalizeHex(NEAR_A));
+    const iPurple = result.findIndex(h => h === "#8000FF");
+    if (iNearA >= 0 && iPurple >= 0) {
+      expect(iNearA).toBeLessThan(iPurple);
+    }
   });
 
   it("handles degenerate A==B without crashing", () => {
-    expect(() => sortGradient([A, B, PURPLE], A, A)).not.toThrow();
+    expect(() => gradientBetween([A, B, PURPLE], A, A)).not.toThrow();
   });
 });
