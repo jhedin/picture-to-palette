@@ -144,7 +144,7 @@ function buildBorderedSameHueImage(): ImageData {
 
 describe("extractPalette (baseline)", () => {
   it("extracts ~3 clusters from a 3-stripe image", async () => {
-    const { hexes } = await extractPalette(buildThreeStripeImage());
+    const { hexes } = await extractPalette(buildThreeStripeImage(), undefined, { segmentMethod: "slic" });
     expect(hexes.length).toBeGreaterThanOrEqual(3);
     expect(hexes.length).toBeLessThanOrEqual(5);
   });
@@ -198,8 +198,8 @@ describe("subtractBackground option", () => {
 
   it("is a no-op when border colour does not appear in the interior", async () => {
     const img = buildWhiteBorderedStripeImage();
-    const { hexes: withSub }    = await extractPalette(img, undefined, { subtractBackground: true  });
-    const { hexes: withoutSub } = await extractPalette(img, undefined, { subtractBackground: false });
+    const { hexes: withSub }    = await extractPalette(img, undefined, { subtractBackground: true,  segmentMethod: "slic" });
+    const { hexes: withoutSub } = await extractPalette(img, undefined, { subtractBackground: false, segmentMethod: "slic" });
     // White is only in the border, not in the interior, so back-projection
     // should not flag any interior segment.  Allow ±1 for SLIC variation.
     expect(Math.abs(withSub.length - withoutSub.length)).toBeLessThanOrEqual(1);

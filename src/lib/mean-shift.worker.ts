@@ -121,7 +121,7 @@ export const DEFAULT_OPTIONS: ExtractionOptions = {
   spatialBandwidth: 16,
   colorBandwidth: 0.12,
   kmeansK: 20,
-  preBlurSigma: 1.0,
+  preBlurSigma: 0.5,
 };
 
 export interface ExtractResult {

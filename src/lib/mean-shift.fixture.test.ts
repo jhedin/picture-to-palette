@@ -241,8 +241,8 @@ describe("3-skeins-yellow.jpg WITH subtractBackground=true", { timeout: 30_000 }
   let withBgSub: string[];
 
   beforeAll(async () => {
-    baseline  = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"))).hexes;
-    withBgSub = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { subtractBackground: true })).hexes;
+    baseline  = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { segmentMethod: "slic" })).hexes;
+    withBgSub = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, { subtractBackground: true, segmentMethod: "slic" })).hexes;
   });
 
   it("still finds the mint green skein (hue ~135–175°)", async () => {
@@ -273,6 +273,7 @@ describe("3-skeins-yellow.jpg WITH kuwahara=true AND subtractBackground=true", {
     withBoth = (await extractPalette(loadJpeg("3-skeins-yellow.jpg"), undefined, {
       kuwahara: true,
       subtractBackground: true,
+      segmentMethod: "slic",
     })).hexes;
   });
 
