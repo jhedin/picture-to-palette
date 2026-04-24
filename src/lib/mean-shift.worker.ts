@@ -55,11 +55,12 @@ export function extractPalette(image: ImageData): string[] {
 
 // Web Worker entrypoint (only registers when running in a worker context).
 if (typeof self !== "undefined" && typeof (self as unknown as Worker).postMessage === "function" && !("window" in self)) {
-  self.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
+  const workerSelf = self as unknown as Worker;
+  workerSelf.addEventListener("message", (e: MessageEvent<ExtractRequest>) => {
     if (e.data?.type === "extract") {
       const hexes = extractPalette(e.data.imageData);
       const response: ExtractResponse = { type: "result", hexes };
-      (self as unknown as Worker).postMessage(response);
+      workerSelf.postMessage(response);
     }
   });
 }

@@ -1,19 +1,26 @@
 import { IonApp, IonRouterOutlet } from "@ionic/react";
 import { IonReactRouter } from "@ionic/react-router";
 import { Redirect, Route } from "react-router-dom";
-import Home from "./pages/Home";
+import Capture from "./pages/Capture";
+import Palette from "./pages/Palette";
+import Gradients from "./pages/Gradients";
+import { PaletteProvider } from "./lib/palette-store";
 
 export default function App() {
   return (
     <IonApp>
-      <IonReactRouter>
-        <IonRouterOutlet>
-          <Route exact path="/home" component={Home} />
-          <Route exact path="/">
-            <Redirect to="/home" />
-          </Route>
-        </IonRouterOutlet>
-      </IonReactRouter>
+      <PaletteProvider>
+        <IonReactRouter>
+          <IonRouterOutlet>
+            <Route exact path="/capture" component={Capture} />
+            <Route exact path="/palette" component={Palette} />
+            <Route exact path="/gradients" component={Gradients} />
+            <Route exact path="/">
+              <Redirect to="/capture" />
+            </Route>
+          </IonRouterOutlet>
+        </IonReactRouter>
+      </PaletteProvider>
     </IonApp>
   );
 }

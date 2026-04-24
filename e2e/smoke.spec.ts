@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-test("home page loads and shows app title", async ({ page }) => {
+test("app loads at /capture", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Picture to Palette")).toBeVisible();
-  await expect(page.getByText("Scaffold is live.")).toBeVisible();
+  await expect(page).toHaveURL(/\/capture$/);
+  await expect(page.getByRole("button", { name: /take or upload photo/i })).toBeVisible();
 });

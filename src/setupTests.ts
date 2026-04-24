@@ -11,19 +11,16 @@ afterEach(() => {
 // available, so we mock just enough for unit tests.
 {
   const OriginalCreateElement = document.createElement.bind(document);
-  // @ts-expect-error — patching createElement for canvas tests
-  document.createElement = (tag: string, opts?: unknown) => {
-    const el = OriginalCreateElement(tag, opts as ElementCreationOptions);
-    if (tag.toLowerCase() === "canvas") {
-      (el as HTMLCanvasElement).getContext = (() => {
-        let _w = 1;
-        let _h = 1;
+  (document as unknown as { createElement: typeof document.createElement }).createElement =
+    (tag: string, opts?: unknown) => {
+      const el = OriginalCreateElement(tag, opts as ElementCreationOptions);
+      if (tag.toLowerCase() === "canvas") {
         const ctx = {
           createImageData(w: number, h: number): ImageData {
             return new ImageData(new Uint8ClampedArray(w * h * 4), w, h);
           },
           putImageData() {},
-          getImageData(x: number, y: number, w: number, h: number): ImageData {
+          getImageData(_x: number, _y: number, w: number, h: number): ImageData {
             return new ImageData(new Uint8ClampedArray(w * h * 4), w, h);
           },
           drawImage() {},
@@ -37,15 +34,13 @@ afterEach(() => {
           set textAlign(_v: unknown) {},
           get textBaseline() { return ""; },
           set textBaseline(_v: unknown) {},
-          _setSize(w: number, h: number) { _w = w; _h = h; },
         };
-        return () => ctx;
-      })();
-      (el as HTMLCanvasElement).toDataURL = () =>
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-    }
-    return el;
-  };
+        (el as HTMLCanvasElement).getContext = (() => ctx) as unknown as HTMLCanvasElement["getContext"];
+        (el as HTMLCanvasElement).toDataURL = () =>
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+      }
+      return el;
+    };
 }
 
 // jsdom doesn't provide createImageBitmap; provide a stub.
