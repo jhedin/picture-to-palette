@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   IonBackButton,
   IonButton,
@@ -40,6 +40,17 @@ export default function Dmc() {
     const expanded = expandDmcPalette(state.dmcSet, 1);
     dispatch({ type: "SET_DMC_SET", colors: expanded });
   }
+
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+
+  const handleCopyList = useCallback(async () => {
+    const text = state.dmcSet
+      .map((d) => `${d.id}\t${d.name}\t${d.hex}`)
+      .join("\n");
+    await navigator.clipboard.writeText(text);
+    setCopyMsg("Copied!");
+    setTimeout(() => setCopyMsg(null), 2000);
+  }, [state.dmcSet]);
 
   const existingIds = new Set(state.dmcSet.map((d) => d.id));
 
@@ -227,6 +238,11 @@ export default function Dmc() {
         <IonButton fill="outline" expand="block" onClick={handleExpandShades}>
           Expand shades
         </IonButton>
+        {state.dmcSet.length > 0 && (
+          <IonButton fill="outline" expand="block" onClick={handleCopyList}>
+            {copyMsg ?? `Copy thread list (${state.dmcSet.length})`}
+          </IonButton>
+        )}
         <IonButton
           expand="block"
           onClick={() => history.push("/gradients")}

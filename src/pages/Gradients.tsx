@@ -23,6 +23,13 @@ import { renderGradientPng } from "../lib/gradient-canvas";
 
 const MODES: GradientMode[] = ["natural", "lightness", "saturation", "hue"];
 
+const MODE_DESC: Record<GradientMode, string> = {
+  natural:    "Colors that perceptually sit on the line between your endpoints in OKLab space.",
+  lightness:  "Colors sorted by brightness — dark to light or light to dark depending on your endpoints.",
+  saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
+  hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
+};
+
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
@@ -131,7 +138,10 @@ export default function Gradients() {
       <IonHeader>
         <IonToolbar>
           <IonButtons slot="start">
-            <IonBackButton defaultHref="/palette" text="Palette" />
+            <IonBackButton
+              defaultHref={isDmcMode ? "/dmc" : "/palette"}
+              text={isDmcMode ? "DMC" : "Palette"}
+            />
           </IonButtons>
           <IonTitle>
             Gradient{" "}
@@ -143,7 +153,7 @@ export default function Gradients() {
       </IonHeader>
       <IonContent className="ion-padding">
         {/* ── Mode selector ─────────────────────────────────────────── */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
           {MODES.map((m) => (
             <button
               key={m}
@@ -164,6 +174,9 @@ export default function Gradients() {
             </button>
           ))}
         </div>
+        <p style={{ fontSize: 12, color: "var(--ion-color-medium)", margin: "0 0 14px" }}>
+          {MODE_DESC[mode]}
+        </p>
 
         {/* ── Color shelf ───────────────────────────────────────────── */}
         <ShelfLabel>
@@ -381,17 +394,14 @@ export default function Gradients() {
         {sequence.length >= 2 && (
           <div
             style={{
-              display: "flex",
               borderRadius: 10,
               overflow: "hidden",
               border: "1px solid rgba(0,0,0,0.12)",
               marginBottom: 14,
+              height: 60,
+              background: `linear-gradient(to right, ${sequence.join(", ")})`,
             }}
-          >
-            {sequence.map((hex, i) => (
-              <div key={`${hex}-${i}`} style={{ flex: 1, background: hex, height: 60 }} />
-            ))}
-          </div>
+          />
         )}
 
         {sequence.length === 1 && (
