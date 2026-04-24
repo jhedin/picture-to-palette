@@ -267,6 +267,58 @@ export function shadeRamp(
   return { shadows, highlights };
 }
 
+export interface PaletteQuality {
+  distinctCount: number;
+  /** Max OKLCH chroma across the palette. Low = all near-grey. */
+  chromaMax: number;
+  /** Lightness range max(L) - min(L). Low = no contrast. */
+  lRange: number;
+  /** Circular spread of hues (0–1). Low = all same hue family. */
+  hueSpread: number;
+  /** True when the palette is too degenerate to be useful. */
+  isDegenerate: boolean;
+}
+
+/**
+ * Compute perceptual quality metrics for a palette of hex colours.
+ * Useful for validating fixture images after preprocessing.
+ *
+ * isDegenerate is set when:
+ *   - fewer than 2 distinct colours, OR
+ *   - chromaMax < 0.03 (all near-neutral) AND lRange < 0.20 (little contrast)
+ */
+export function paletteQuality(hexes: string[]): PaletteQuality {
+  const valid = hexes.map(normalizeHex).filter((h): h is string => h !== null);
+  const distinctCount = valid.length;
+
+  if (distinctCount === 0) {
+    return { distinctCount: 0, chromaMax: 0, lRange: 0, hueSpread: 0, isDegenerate: true };
+  }
+
+  const lch = valid.map(hexToOklch);
+  const Ls = lch.map((c) => c.L);
+  const lRange = Math.max(...Ls) - Math.min(...Ls);
+  const chromaMax = Math.max(...lch.map((c) => c.C));
+
+  // Circular hue spread: 1 - length of the mean resultant vector.
+  // Values near 1 = all hues represented; near 0 = all in one cluster.
+  const chromatic = lch.filter((c) => c.C >= 0.04);
+  let hueSpread = 0;
+  if (chromatic.length >= 2) {
+    const radians = chromatic.map((c) => c.h * (Math.PI / 180));
+    const sinSum = radians.reduce((s, r) => s + Math.sin(r), 0);
+    const cosSum = radians.reduce((s, r) => s + Math.cos(r), 0);
+    const R = Math.sqrt(sinSum * sinSum + cosSum * cosSum) / radians.length;
+    hueSpread = 1 - R;
+  }
+
+  const isDegenerate =
+    distinctCount < 2 ||
+    (chromaMax < 0.03 && lRange < 0.20);
+
+  return { distinctCount, chromaMax, lRange, hueSpread, isDegenerate };
+}
+
 export interface SwatchMeta {
   hex: string;
   L: number;
