@@ -97,18 +97,38 @@ export function extractPalette(image: ImageData): ExtractResult {
   }
 
   // Phase 3 — mean-shift independently on each segment's pixels.
-  // Each segment contributes its own dominant colour(s); no global
-  // clustering means a small but vivid skein can't be outvoted by a
-  // large neutral background.
+  // Track per-segment representative colors so the debug view can color
+  // each pixel from its own segment rather than a global nearest-cluster.
   const allCenters: Point3[] = [];
+  // segRepCenter[si] = the dominant center found for segment si
+  const segRepCenter: Point3[] = new Array(numSeg);
   let totalBw = 0, bwCount = 0;
 
-  for (const pixels of segPixelSets) {
-    if (pixels.length < 5) continue;
-    // Within-segment bandwidth: quantile=0.3 stays within this region's
-    // colour spread; cap keeps distinct sub-colours in the segment separate.
+  for (let si = 0; si < numSeg; si++) {
+    const pixels = segPixelSets[si];
+    if (pixels.length < 5) {
+      // Too few pixels — use the mean of whatever is there
+      if (pixels.length > 0) {
+        const mean: Point3 = [
+          pixels.reduce((s, p) => s + p[0], 0) / pixels.length,
+          pixels.reduce((s, p) => s + p[1], 0) / pixels.length,
+          pixels.reduce((s, p) => s + p[2], 0) / pixels.length,
+        ];
+        segRepCenter[si] = mean;
+        allCenters.push(mean);
+      }
+      continue;
+    }
     const bw = Math.max(0.04, Math.min(0.10, estimateBandwidth(pixels, 0.3)));
     const centers = meanShift(pixels, { bandwidth: bw, minBinFreq: 3, maxIter: 50 });
+    // Representative for this segment = center nearest its mean
+    const mean: Point3 = [
+      pixels.reduce((s, p) => s + p[0], 0) / pixels.length,
+      pixels.reduce((s, p) => s + p[1], 0) / pixels.length,
+      pixels.reduce((s, p) => s + p[2], 0) / pixels.length,
+    ];
+    const rep = centers[nearestCluster(mean, centers)];
+    segRepCenter[si] = rep;
     allCenters.push(...centers);
     totalBw += bw; bwCount++;
   }
@@ -132,11 +152,16 @@ export function extractPalette(image: ImageData): ExtractResult {
 
   const hexes = unique.map((c) => oklabToHex({ L: c[0], a: c[1], b: c[2] }));
 
-  // Phase 5 — build per-pixel segmentation image for the debug overlay.
+  // Phase 5 — build segmentation debug image.
+  // Each pixel is colored by its SLIC segment's representative color, not by
+  // global nearest-cluster — this shows clean spatial regions, not a noisy
+  // color-space mosaic.
   const clusterSizes = new Array<number>(unique.length).fill(0);
   const segPixels = new Uint8ClampedArray(sized.data.length);
   for (let i = 0; i < N; i++) {
-    const ci = nearestCluster(labPoints[i], unique);
+    const si = labels[i];
+    const rep = segRepCenter[si] ?? labPoints[i];
+    const ci = nearestCluster(rep, unique);
     clusterSizes[ci]++;
     const hex = hexes[ci];
     segPixels[i * 4]     = parseInt(hex.slice(1, 3), 16);

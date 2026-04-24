@@ -6,7 +6,7 @@ import {
   deltaE00,
   oklabToHex,
   dedupByDeltaE,
-  pickIntermediates,
+  sortGradient,
   type Oklab,
 } from "./color";
 
@@ -103,46 +103,30 @@ describe("dedupByDeltaE", () => {
   });
 });
 
-describe("pickIntermediates", () => {
-  // Anchors are pure red and pure blue. Test palette includes a perfect
-  // mid-purple (which should be picked first), an off-axis green (rejected
-  // for any k>=1 if a closer purple is present), and a near-anchor red.
-  const A = "#FF0000"; // anchor A
-  const B = "#0000FF"; // anchor B
-  const PURPLE = "#8000FF"; // close to OKLab path midpoint
-  const NEAR_PURPLE = "#9000A0"; // also near path
-  const GREEN = "#00FF00"; // far from path
-  const NEAR_A = "#F00010"; // very close to A
+describe("sortGradient", () => {
+  const A = "#FF0000"; // anchor A (red)
+  const B = "#0000FF"; // anchor B (blue)
+  const PURPLE = "#8000FF"; // projects to mid-path t≈0.5
+  const NEAR_A = "#F00010"; // projects near t≈0, close to A
 
-  it("k=0 returns empty", () => {
-    expect(pickIntermediates([A, B, PURPLE, GREEN], A, B, 0)).toEqual([]);
+  it("returns all palette colors sorted from A to B", () => {
+    const result = sortGradient([A, B, PURPLE, NEAR_A], A, B);
+    expect(result.length).toBe(4);
+    // NEAR_A (t≈0) should come before PURPLE (t≈0.5) which comes before B (t=1)
+    const iA = result.indexOf("#FF0000");
+    const iNearA = result.indexOf(result.find(h => h !== "#FF0000" && h !== "#0000FF" && h !== "#8000FF")!);
+    const iPurple = result.indexOf("#8000FF");
+    const iB = result.indexOf("#0000FF");
+    expect(iA).toBeLessThan(iPurple);
+    expect(iPurple).toBeLessThan(iB);
   });
-  it("k=1 picks the on-path color", () => {
-    const result = pickIntermediates([A, B, PURPLE, GREEN], A, B, 1);
-    expect(result).toEqual([PURPLE]);
+
+  it("returns a single element for a 1-color palette", () => {
+    const result = sortGradient([A], A, B);
+    expect(result.length).toBe(1);
   });
-  it("k=1 rejects far-from-path colors when an on-path option exists", () => {
-    const result = pickIntermediates([A, B, GREEN, PURPLE], A, B, 1);
-    expect(result).not.toContain(GREEN);
-  });
-  it("returns colors ordered by their position along the path (A → B)", () => {
-    const result = pickIntermediates([A, B, PURPLE, NEAR_A], A, B, 2);
-    // NEAR_A projects to t≈0, PURPLE to t≈0.5; expect NEAR_A first.
-    expect(result).toEqual([NEAR_A, PURPLE]);
-  });
-  it("excludes the anchors from candidates", () => {
-    const result = pickIntermediates([A, B], A, B, 1);
-    expect(result).toEqual([]);
-  });
-  it("returns fewer than k if not enough viable candidates", () => {
-    const result = pickIntermediates([A, B, PURPLE], A, B, 3);
-    expect(result.length).toBeLessThanOrEqual(1);
-  });
-  it("spread penalty: avoids stacking two intermediates at the same t", () => {
-    // PURPLE and NEAR_PURPLE both project near t=0.5; only one should be picked
-    // when k=1, but if k=2 we should NOT see both — we should see PURPLE plus
-    // something else (NEAR_A would not exist here, so we get only PURPLE).
-    const result = pickIntermediates([A, B, PURPLE, NEAR_PURPLE], A, B, 2);
-    expect(result.length).toBeLessThanOrEqual(1);
+
+  it("handles degenerate A==B without crashing", () => {
+    expect(() => sortGradient([A, B, PURPLE], A, A)).not.toThrow();
   });
 });

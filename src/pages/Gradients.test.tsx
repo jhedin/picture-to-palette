@@ -3,15 +3,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import {
-  PaletteProvider,
-  usePalette,
-} from "../lib/palette-store";
+import { PaletteProvider, usePalette } from "../lib/palette-store";
 import Gradients from "./Gradients";
 
 vi.mock("../lib/gradient-canvas", () => ({
   renderGradientPng: vi.fn(async () => "data:image/png;base64,FAKE"),
-  sampleGradientStop: (colors: string[], t: number) => colors[Math.floor(t * (colors.length - 1))],
 }));
 
 function Seeder({ hexes, anchors }: { hexes: string[]; anchors: [number, number] }) {
@@ -40,28 +36,37 @@ function renderGradients(hexes: string[], anchors: [number, number]) {
 }
 
 describe("Gradients page", () => {
-  it("renders at least one candidate when both anchors set", async () => {
-    renderGradients(["#FF0000", "#00FF00", "#0000FF", "#FFFF00"], [0, 1]);
+  it("shows the block strip when both anchors are set", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: /gradient candidate/i }).length).toBeGreaterThanOrEqual(1);
+      // The strip is a div containing child divs (one per colour block)
+      expect(screen.getByText(/colours arranged from anchor/i)).toBeInTheDocument();
     });
   });
 
-  it("Save is disabled until a candidate is selected", async () => {
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 1]);
-    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
-    const save = screen.getByRole("button", { name: /^save$/i });
-    expect(save).toBeDisabled();
-    await userEvent.click(screen.getAllByRole("button", { name: /gradient candidate/i })[0]);
-    expect(save).not.toBeDisabled();
+  it("Save PNG button is enabled when gradient has colours", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /save png/i })).not.toBeDisabled(),
+    );
   });
 
-  it("clicking Save calls renderGradientPng", async () => {
+  it("clicking Save PNG calls renderGradientPng", async () => {
     const mod = await import("../lib/gradient-canvas");
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 1]);
-    await waitFor(() => screen.getAllByRole("button", { name: /gradient candidate/i }));
-    await userEvent.click(screen.getAllByRole("button", { name: /gradient candidate/i })[0]);
-    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getByRole("button", { name: /save png/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save png/i }));
     await waitFor(() => expect(mod.renderGradientPng).toHaveBeenCalled());
+  });
+
+  it("shows fallback when no anchors are set", () => {
+    render(
+      <MemoryRouter>
+        <PaletteProvider>
+          <Gradients />
+        </PaletteProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/pick two anchors/i)).toBeInTheDocument();
   });
 });

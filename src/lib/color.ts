@@ -68,51 +68,33 @@ interface ScoredCandidate {
   perpDist: number; // ΔE-equivalent perpendicular distance to path
 }
 
-export function pickIntermediates(
+/**
+ * Sort all palette colors by their projection onto the A→B line in OKLab
+ * space, returning them in gradient order from A to B.
+ * This is the "Axiom" model: arrange your actual available colours (the
+ * wool balls you own) in the order that forms the best gradient — no
+ * interpolated colours are invented.
+ */
+export function sortGradient(
   palette: string[],
   anchorA: string,
   anchorB: string,
-  k: number,
 ): string[] {
-  if (k <= 0) return [];
-
   const a = hexToOklab(anchorA);
   const b = hexToOklab(anchorB);
   const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
   const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
-  if (abLenSq === 0) return []; // degenerate: A == B
+  if (abLenSq === 0) return palette.map(normalizeHex).filter((h): h is string => h !== null);
 
-  const normA = normalizeHex(anchorA);
-  const normB = normalizeHex(anchorB);
-
-  const candidates = palette
+  return palette
     .map(normalizeHex)
-    .filter((h): h is string => h !== null && h !== normA && h !== normB);
-
-  const scored: ScoredCandidate[] = candidates.map((hex) => {
-    const p = hexToOklab(hex);
-    const ap = { L: p.L - a.L, a: p.a - a.a, b: p.b - a.b };
-    let t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-    t = Math.max(0, Math.min(1, t));
-    const proj: Oklab = {
-      L: a.L + t * ab.L,
-      a: a.a + t * ab.a,
-      b: a.b + t * ab.b,
-    };
-    const projHex = oklabToHex(proj);
-    return { hex, t, perpDist: deltaE00(hex, projHex) };
-  });
-
-  scored.sort((x, y) => x.perpDist - y.perpDist);
-
-  const minGap = 1 / (k + 2);
-  const chosen: ScoredCandidate[] = [];
-  for (const s of scored) {
-    if (chosen.length >= k) break;
-    if (chosen.every((c) => Math.abs(c.t - s.t) >= minGap)) {
-      chosen.push(s);
-    }
-  }
-  chosen.sort((x, y) => x.t - y.t);
-  return chosen.map((c) => c.hex);
+    .filter((h): h is string => h !== null)
+    .map((hex) => {
+      const p = hexToOklab(hex);
+      const ap = { L: p.L - a.L, a: p.a - a.a, b: p.b - a.b };
+      const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+      return { hex, t };
+    })
+    .sort((x, y) => x.t - y.t)
+    .map((c) => c.hex);
 }
