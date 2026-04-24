@@ -40,5 +40,28 @@ export const IonButton = ({
   </button>
 );
 
+export const IonRange = ({
+  value,
+  min,
+  max,
+  step,
+  onIonChange,
+}: {
+  value?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onIonChange?: (e: { detail: { value: number } }) => void;
+}) => (
+  <input
+    type="range"
+    value={value}
+    min={min}
+    max={max}
+    step={step}
+    onChange={(e) => onIonChange?.({ detail: { value: Number(e.target.value) } })}
+  />
+);
+
 export const IonRouterOutlet = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
 export const IonReactRouter = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
