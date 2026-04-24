@@ -39,3 +39,6 @@ playwright.config.d.ts
 
 # PWA generated assets
 dev-dist
+
+# Claude Code agent worktree tracking
+.claude/
