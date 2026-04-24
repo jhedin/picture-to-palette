@@ -218,6 +218,14 @@ export default function Capture() {
                   format={(v) => `${v} px`}
                   onChange={(v) => setOptions((o) => ({ ...o, segmentSize: v }))}
                 />
+                <ExtractionSlider
+                  label="Ignore small regions"
+                  hint="Skip regions under this fraction of the target region size — filters labels, glints, slivers. 0 = off"
+                  value={options.minSegmentFrac}
+                  min={0} max={1.0} step={0.05}
+                  format={(v) => v === 0 ? "off" : `×${v.toFixed(2)}`}
+                  onChange={(v) => setOptions((o) => ({ ...o, minSegmentFrac: v }))}
+                />
                 <button
                   type="button"
                   onClick={() => setOptions({ ...DEFAULT_OPTIONS })}

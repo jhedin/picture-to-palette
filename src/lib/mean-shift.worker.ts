@@ -39,13 +39,18 @@ export interface CropBox {
 export interface ExtractionOptions {
   segmentSize: number;       // default 1500
   segBandwidthCap: number;   // default 0.10
-  mergeBandwidth: number;    // default 0.12
+  mergeBandwidth: number;    // default 0.08
+  /** Skip SLIC segments smaller than (minSegmentFrac × segmentSize) pixels.
+   *  0 = no minimum.  0.5 = skip anything under half the expected segment size.
+   *  Scales with segmentSize so it stays meaningful regardless of crop or K. */
+  minSegmentFrac: number;    // default 0
 }
 
 export const DEFAULT_OPTIONS: ExtractionOptions = {
   segmentSize: 1500,
   segBandwidthCap: 0.10,
-  mergeBandwidth: 0.08, // same as old greedy DEDUP; increase toward 0.15 to collapse shadow/highlight pairs
+  mergeBandwidth: 0.08,
+  minSegmentFrac: 0,
 };
 
 export interface ExtractResult {
@@ -160,7 +165,7 @@ export function extractPalette(
   cropRegion?: CropBox,
   opts?: Partial<ExtractionOptions>,
 ): ExtractResult {
-  const { segmentSize, segBandwidthCap, mergeBandwidth } = { ...DEFAULT_OPTIONS, ...opts };
+  const { segmentSize, segBandwidthCap, mergeBandwidth, minSegmentFrac } = { ...DEFAULT_OPTIONS, ...opts };
   const source = cropRegion ? cropImageData(image, cropRegion) : image;
   const sized = capSize(source);
   const W = sized.width, H = sized.height, N = W * H;
@@ -206,6 +211,10 @@ export function extractPalette(
 
   for (let si = 0; si < numSeg; si++) {
     const pixels = segPixelSets[si];
+    // Skip segments below the minimum size threshold — labels, glints, edge slivers.
+    // Threshold is a fraction of total pixels so it scales with crop size.
+    // segRepCenter[si] stays undefined; phase 5 falls back to per-pixel nearest-cluster.
+    if (minSegmentFrac > 0 && pixels.length < minSegmentFrac * segmentSize) continue;
     if (pixels.length < 5) {
       // Too few pixels — use the mean of whatever is there
       if (pixels.length > 0) {
