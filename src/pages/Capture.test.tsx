@@ -6,6 +6,8 @@ import { PaletteProvider } from "../lib/palette-store";
 import Capture from "./Capture";
 
 vi.mock("../lib/mean-shift.worker", () => ({
+  DEFAULT_OPTIONS: { segmentSize: 1500, segBandwidthCap: 0.10, mergeBandwidth: 0.08, minSegmentFrac: 0, subtractBackground: false, kuwahara: false, mergeL: 1.0 },
+  suggestCrop: vi.fn(() => ({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 })),
   extractPalette: vi.fn(() => ({
     hexes: ["#FF0000", "#00FF00", "#0000FF"],
     debug: {
@@ -40,9 +42,10 @@ describe("Capture page", () => {
     renderCapture();
     const file = new File([new Uint8Array([1, 2, 3])], "test.jpg", { type: "image/jpeg" });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await act(async () => {
-      await userEvent.upload(input, file);
-    });
+    await act(async () => { await userEvent.upload(input, file); });
+    // After upload, the crop UI appears — confirm extraction.
+    await waitFor(() => screen.getByRole("button", { name: /extract colors/i }));
+    await userEvent.click(screen.getByRole("button", { name: /extract colors/i }));
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: /add color #/i }).length).toBe(3);
     });
@@ -52,9 +55,9 @@ describe("Capture page", () => {
     renderCapture();
     const file = new File([new Uint8Array([1, 2, 3])], "test.jpg", { type: "image/jpeg" });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await act(async () => {
-      await userEvent.upload(input, file);
-    });
+    await act(async () => { await userEvent.upload(input, file); });
+    await waitFor(() => screen.getByRole("button", { name: /extract colors/i }));
+    await userEvent.click(screen.getByRole("button", { name: /extract colors/i }));
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: /add color #/i }).length).toBe(3),
     );

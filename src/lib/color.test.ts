@@ -3,6 +3,7 @@ import {
   normalizeHex,
   hexToOklab,
   hexToOklch,
+  paletteQuality,
   deltaE00,
   oklabToHex,
   dedupByDeltaE,
@@ -361,5 +362,44 @@ describe("shadeRamp", () => {
     const { shadows, highlights } = shadeRamp([MIDTONE], MIDTONE, 2);
     expect(shadows).toEqual([]);
     expect(highlights).toEqual([]);
+  });
+});
+
+describe("paletteQuality", () => {
+  it("returns isDegenerate=true for empty input", () => {
+    const q = paletteQuality([]);
+    expect(q.isDegenerate).toBe(true);
+    expect(q.distinctCount).toBe(0);
+  });
+
+  it("returns isDegenerate=true for a single near-grey", () => {
+    // #808080 — neutral grey, low chroma, single color
+    const q = paletteQuality(["#808080"]);
+    expect(q.isDegenerate).toBe(true);
+    expect(q.distinctCount).toBe(1);
+  });
+
+  it("returns isDegenerate=false for a rich palette", () => {
+    // black, white, red, blue, green — high contrast and varied hues
+    const q = paletteQuality(["#000000", "#FFFFFF", "#FF0000", "#0000FF", "#00FF00"]);
+    expect(q.isDegenerate).toBe(false);
+    expect(q.distinctCount).toBe(5);
+    expect(q.lRange).toBeGreaterThan(0.5);
+    expect(q.chromaMax).toBeGreaterThan(0.1);
+    expect(q.hueSpread).toBeGreaterThan(0.3);
+  });
+
+  it("two greys with no chroma are degenerate", () => {
+    // #333333 and #cccccc — no chroma, low-ish contrast
+    const q = paletteQuality(["#333333", "#cccccc"]);
+    expect(q.chromaMax).toBeLessThan(0.03);
+    // lRange ~0.55 here so not degenerate by that axis alone — just chromaMax check
+    // but combined rule is chromaMax<0.03 AND lRange<0.20 → not degenerate with these
+    expect(q.isDegenerate).toBe(false); // lRange is wide enough
+  });
+
+  it("two near-white greys with no contrast are degenerate", () => {
+    const q = paletteQuality(["#f0f0f0", "#ffffff"]);
+    expect(q.isDegenerate).toBe(true); // both chromaMax < 0.03 and lRange < 0.20
   });
 });

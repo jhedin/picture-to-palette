@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check-fixtures": "vite-node scripts/check-fixtures.ts"
   },
   "dependencies": {
     "@ionic/react": "^8.4.0",
@@ -38,6 +39,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "jpeg-js": "^0.4.4",
     "jsdom": "^25.0.1",
+    "pngjs": "^7.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vite-plugin-pwa": "^0.21.1",
