@@ -245,13 +245,14 @@ export default function Gradients() {
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                     <div style={{ position: "relative" }}>
                       <div
+                        title={isOutlier ? "Perceptual outlier — this color may not blend smoothly with its neighbours. Try removing it or inserting a bridging color with the + button." : undefined}
                         style={{
                           width: 44,
                           height: 44,
                           borderRadius: 8,
                           background: hex,
                           border: isOutlier
-                            ? "2px solid #f59e0b"
+                            ? "3px solid #f59e0b"
                             : "2px solid rgba(0,0,0,0.10)",
                         }}
                       />
@@ -320,6 +321,14 @@ export default function Gradients() {
           </div>
         )}
 
+        {/* Outlier legend — only shown when at least one item is flagged */}
+        {[...outlierMap.values()].some(Boolean) && (
+          <p style={{ fontSize: 12, color: "#f59e0b", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, border: "3px solid #f59e0b", flexShrink: 0 }} />
+            Amber border = perceptual outlier. This color may not blend smoothly — remove it or use + to insert a bridging color.
+          </p>
+        )}
+
         {/* ── Candidate picker for the active gap ───────────────────── */}
         {insertAt !== null && (
           <div
@@ -385,6 +394,11 @@ export default function Gradients() {
           </div>
         )}
 
+        {sequence.length === 1 && (
+          <p style={{ fontSize: 13, color: "var(--ion-color-medium)", margin: "0 0 8px", textAlign: "center" }}>
+            Add at least one more color to enable Save PNG.
+          </p>
+        )}
         <IonButton
           expand="block"
           onClick={handleSave}
