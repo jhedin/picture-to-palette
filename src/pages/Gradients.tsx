@@ -31,8 +31,7 @@ export default function Gradients() {
   const [insertAt, setInsertAt] = useState<number | null>(null);
 
   // Color space: DMC if loaded, otherwise the extracted palette.
-  const dmcSet: Array<{ id: string; name: string; hex: string }> =
-    (state as { dmcSet?: typeof state extends { dmcSet?: infer D } ? D : never }).dmcSet ?? [];
+  const dmcSet = state.dmcSet;
   const colorSpace: string[] = useMemo(
     () => (dmcSet.length > 0 ? dmcSet.map((d) => d.hex) : state.colors.map((c) => c.hex)),
     [dmcSet, state.colors],
@@ -127,8 +126,6 @@ export default function Gradients() {
       </IonPage>
     );
   }
-
-  const shelf = colorSpace.filter((h) => !sequence.includes(h));
 
   return (
     <IonPage>

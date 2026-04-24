@@ -63,6 +63,7 @@ export function paletteReducer(
 
     case "REMOVE_COLOR": {
       return {
+        ...state,
         colors: state.colors.filter((c) => c.id !== action.id),
         anchorA: state.anchorA === action.id ? null : state.anchorA,
         anchorB: state.anchorB === action.id ? null : state.anchorB,

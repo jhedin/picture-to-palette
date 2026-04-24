@@ -108,6 +108,50 @@ describe("paletteReducer · REMOVE_COLOR", () => {
     expect(s.anchorA).toBeNull();
     expect(s.anchorB).toBe(idB);
   });
+
+  it("preserves dmcSet when removing a palette color", () => {
+    let s: PaletteState = empty;
+    s = paletteReducer(s, { type: "ADD_COLOR", hex: "#FF0000" });
+    s = paletteReducer(s, { type: "SET_DMC_SET", colors: [{ id: "321", name: "Red", hex: "#C72B3B" }] });
+    const id = s.colors[0].id;
+    s = paletteReducer(s, { type: "REMOVE_COLOR", id });
+    expect(s.dmcSet).toHaveLength(1);
+    expect(s.dmcSet[0].id).toBe("321");
+  });
+});
+
+describe("paletteReducer · DMC actions", () => {
+  it("SET_DMC_SET replaces the entire set", () => {
+    let s = paletteReducer(empty, { type: "SET_DMC_SET", colors: [{ id: "321", name: "Red", hex: "#C72B3B" }] });
+    expect(s.dmcSet).toHaveLength(1);
+    s = paletteReducer(s, { type: "SET_DMC_SET", colors: [] });
+    expect(s.dmcSet).toHaveLength(0);
+  });
+
+  it("ADD_DMC appends and deduplicates by id", () => {
+    let s = paletteReducer(empty, { type: "ADD_DMC", color: { id: "321", name: "Red", hex: "#C72B3B" } });
+    expect(s.dmcSet).toHaveLength(1);
+    s = paletteReducer(s, { type: "ADD_DMC", color: { id: "321", name: "Red", hex: "#C72B3B" } });
+    expect(s.dmcSet).toHaveLength(1); // deduplicated
+  });
+
+  it("REMOVE_DMC removes by id and preserves other state", () => {
+    let s = paletteReducer(empty, { type: "ADD_COLOR", hex: "#FF0000" });
+    s = paletteReducer(s, { type: "SET_DMC_SET", colors: [
+      { id: "321", name: "Red", hex: "#C72B3B" },
+      { id: "666", name: "Bright Red", hex: "#E31D42" },
+    ]});
+    s = paletteReducer(s, { type: "REMOVE_DMC", id: "321" });
+    expect(s.dmcSet).toHaveLength(1);
+    expect(s.dmcSet[0].id).toBe("666");
+    expect(s.colors).toHaveLength(1); // palette unaffected
+  });
+
+  it("RESET clears dmcSet", () => {
+    let s = paletteReducer(empty, { type: "SET_DMC_SET", colors: [{ id: "321", name: "Red", hex: "#C72B3B" }] });
+    s = paletteReducer(s, { type: "RESET" });
+    expect(s.dmcSet).toHaveLength(0);
+  });
 });
 
 describe("paletteReducer · RESET", () => {

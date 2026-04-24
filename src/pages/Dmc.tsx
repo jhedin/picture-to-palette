@@ -73,8 +73,8 @@ export default function Dmc() {
         {/* DMC set list */}
         <div style={{ margin: "16px 0" }}>
           {state.dmcSet.length === 0 ? (
-            <IonText>
-              <p style={{ color: "#888" }}>No threads selected yet.</p>
+            <IonText color="medium">
+              <p>No threads selected yet.</p>
             </IonText>
           ) : (
             state.dmcSet.map((color) => (
@@ -85,7 +85,7 @@ export default function Dmc() {
                   alignItems: "center",
                   gap: 12,
                   padding: "8px 0",
-                  borderBottom: "1px solid #eee",
+                  borderBottom: "1px solid var(--ion-color-light-shade, #eee)",
                 }}
               >
                 {/* Color swatch circle */}
@@ -114,8 +114,8 @@ export default function Dmc() {
                     height: 28,
                     borderRadius: "50%",
                     border: "none",
-                    background: "#000a",
-                    color: "white",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
                     cursor: "pointer",
                     fontSize: 16,
                     lineHeight: 1,
@@ -175,8 +175,8 @@ export default function Dmc() {
                     width: "100%",
                     padding: "8px 12px",
                     border: "none",
-                    borderBottom: "1px solid #eee",
-                    background: "white",
+                    borderBottom: "1px solid var(--ion-color-light-shade, #eee)",
+                    background: "var(--ion-background-color, #fff)",
                     cursor: "pointer",
                     textAlign: "left",
                   }}

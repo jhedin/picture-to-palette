@@ -98,6 +98,8 @@ export default function Capture() {
         const existing = new Set(prev);
         return [...prev, ...hexes.filter((h) => !existing.has(h))];
       });
+      setMergeMode(false);
+      setMergeFirst(null);
       setStatus("ready");
     } catch (err) {
       setStatus("error");
