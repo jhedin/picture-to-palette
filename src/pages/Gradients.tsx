@@ -401,18 +401,22 @@ export default function Gradients() {
           </div>
         )}
 
-        {/* ── Preview strip ─────────────────────────────────────────── */}
+        {/* ── Preview strip — solid blocks, no blending ─────────────── */}
         {sequence.length >= 2 && (
           <div
             style={{
+              display: "flex",
               borderRadius: 10,
               overflow: "hidden",
               border: "1px solid rgba(0,0,0,0.12)",
               marginBottom: 14,
               height: 60,
-              background: `linear-gradient(to right, ${sequence.join(", ")})`,
             }}
-          />
+          >
+            {sequence.map((hex, i) => (
+              <div key={`${hex}-${i}`} style={{ flex: 1, background: hex }} />
+            ))}
+          </div>
         )}
 
         {sequence.length === 1 && (
