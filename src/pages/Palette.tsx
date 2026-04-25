@@ -134,10 +134,9 @@ export default function Palette() {
                     width: 22,
                     height: 22,
                     borderRadius: "50%",
-                    border: "none",
+                    border: "2px solid #888",
                     background: "#fff",
                     color: "#111",
-                    border: "2px solid #888",
                     boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
                     cursor: "pointer",
                   }}
