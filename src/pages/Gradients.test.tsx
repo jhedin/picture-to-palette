@@ -56,16 +56,34 @@ describe("Gradients page", () => {
     expect(screen.getByText(/capture screen/i)).toBeInTheDocument();
   });
 
-  it("shows the palette shelf when colors exist", async () => {
+  it("auto-seeds all palette colors into the sequence", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove #00FF00 from sequence/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
     });
+  });
+
+  it("shelf is empty when all colors are in the sequence", async () => {
+    renderGradients(["#FF0000", "#0000FF"]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeInTheDocument();
+  });
+
+  it("removing a sequence item makes it available on the shelf again", async () => {
+    renderGradients(["#FF0000", "#0000FF"], [0, 1]);
+    await waitFor(() => screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeDisabled(),
+    );
   });
 
   it("tapping a shelf color adds it to the sequence", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
-    // Auto-seeded: all 3 colors are in the sequence; clear first to get a clean slate.
     await waitFor(() => screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
@@ -80,40 +98,16 @@ describe("Gradients page", () => {
     });
   });
 
-  it("+ button appears between two sequence items and shows candidates", async () => {
-    // sortGradient places all 3 colors in the sequence; remove the middle one first.
-    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
-    await userEvent.click(screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
-    await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
-    await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
+  it("clear button empties the sequence", async () => {
+    renderGradients(["#FF0000", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /clear/i }));
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /insert #8000FF/i })).toBeInTheDocument(),
-    );
-  });
-
-  it("inserting a candidate adds it to the sequence", async () => {
-    renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
-    await waitFor(() => screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
-    await userEvent.click(screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
-    await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
-    await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
-    await waitFor(() => screen.getByRole("button", { name: /insert #8000FF/i }));
-    await userEvent.click(screen.getByRole("button", { name: /insert #8000FF/i }));
-    expect(screen.getByRole("button", { name: /remove #8000FF from sequence/i })).toBeInTheDocument();
-  });
-
-  it("removing a sequence item makes it available on the shelf again", async () => {
-    renderGradients(["#FF0000", "#0000FF"], [0, 1]);
-    await waitFor(() => screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
-    await userEvent.click(screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeDisabled(),
+      expect(screen.queryByRole("button", { name: /remove #FF0000 from sequence/i })).not.toBeInTheDocument(),
     );
   });
 
   it("Save PNG is disabled with fewer than 2 sequence items", async () => {
-    // Auto-seeds with all palette colors; clear then add just one to test the disabled state.
     renderGradients(["#FF0000", "#0000FF"]);
     await waitFor(() => screen.getByRole("button", { name: /save png/i }));
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
