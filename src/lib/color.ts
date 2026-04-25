@@ -177,6 +177,27 @@ export function pickEvenly(sorted: string[], n: number): string[] {
   return result;
 }
 
+/** Sort ALL palette colours by their projection onto the A→B axis in OKLab
+ *  space — no filtering, every colour gets a position.  Useful for building
+ *  a stepped gradient from every palette colour. */
+export function sortGradient(
+  palette: string[],
+  anchorA: string,
+  anchorB: string,
+): string[] {
+  const a = hexToOklab(anchorA);
+  const b = hexToOklab(anchorB);
+  const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
+  const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
+  const norm = (hex: string) => {
+    const p = hexToOklab(hex);
+    const ap = { L: p.L - a.L, a: p.a - a.a, b: p.b - a.b };
+    const t = abLenSq === 0 ? 0 : (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+    return { hex: normalizeHex(hex) ?? hex, t };
+  };
+  return palette.map(norm).sort((x, y) => x.t - y.t).map((c) => c.hex);
+}
+
 // OKLCH hue targets for hue-shift shading (sunlit = warm light assumption).
 export const SHADOW_HUE_TARGET = 220;    // blue-purple
 export const HIGHLIGHT_HUE_TARGET = 90; // yellow-orange

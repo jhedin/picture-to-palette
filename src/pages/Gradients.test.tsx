@@ -65,7 +65,9 @@ describe("Gradients page", () => {
 
   it("tapping a shelf color adds it to the sequence", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
-    await waitFor(() => screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    // Auto-seeded: all 3 colors are in the sequence; clear first to get a clean slate.
+    await waitFor(() => screen.getByRole("button", { name: /clear/i }));
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
     expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
   });
@@ -79,8 +81,10 @@ describe("Gradients page", () => {
   });
 
   it("+ button appears between two sequence items and shows candidates", async () => {
-    // Red → purple → blue: purple is between in natural mode
+    // sortGradient places all 3 colors in the sequence; remove the middle one first.
     renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
     await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
     await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
     await waitFor(() =>
@@ -90,6 +94,8 @@ describe("Gradients page", () => {
 
   it("inserting a candidate adds it to the sequence", async () => {
     renderGradients(["#FF0000", "#8000FF", "#0000FF"], [0, 2]);
+    await waitFor(() => screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove #8000FF from sequence/i }));
     await waitFor(() => screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
     await userEvent.click(screen.getByRole("button", { name: /find colors between position 1 and 2/i }));
     await waitFor(() => screen.getByRole("button", { name: /insert #8000FF/i }));
@@ -107,10 +113,10 @@ describe("Gradients page", () => {
   });
 
   it("Save PNG is disabled with fewer than 2 sequence items", async () => {
+    // Auto-seeds with all palette colors; clear then add just one to test the disabled state.
     renderGradients(["#FF0000", "#0000FF"]);
     await waitFor(() => screen.getByRole("button", { name: /save png/i }));
-    expect(screen.getByRole("button", { name: /save png/i })).toBeDisabled();
-    // Add one color
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
     expect(screen.getByRole("button", { name: /save png/i })).toBeDisabled();
   });
