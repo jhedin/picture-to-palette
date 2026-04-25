@@ -60,14 +60,18 @@ export default function Gradients() {
     if (initial.length > 0) setSequence(initial);
   }, [state.anchorA, state.anchorB, state.colors]);
 
-  // Auto-seed: sort all palette colors by lightness when no anchors are set.
-  // This gives a sensible default gradient without requiring manual tapping.
+  // Auto-seed: pick the two lightest/darkest palette colors as endpoints,
+  // then fill in only the palette colors that perceptually lie between them.
   const autoSeeded = useRef(false);
   useEffect(() => {
     if (autoSeeded.current || colorSpace.length === 0) return;
     if (state.anchorA !== null || state.anchorB !== null) return;
     autoSeeded.current = true;
-    setSequence([...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L));
+    const byL = [...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L);
+    const darkest = byL[0];
+    const lightest = byL[byL.length - 1];
+    const between = gradientBetween(colorSpace, darkest, lightest, "natural");
+    setSequence([darkest, ...between, lightest]);
   }, [colorSpace, state.anchorA, state.anchorB]);
 
   // Candidates only for the currently open gap — O(colorSpace) instead of
