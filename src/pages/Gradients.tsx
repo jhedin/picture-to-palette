@@ -15,6 +15,7 @@ import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
 import {
   gradientBetween,
+  hexToOklab,
   swatchMeta,
   scoreGradientOutliers,
   type GradientMode,
@@ -58,6 +59,16 @@ export default function Gradients() {
     const initial = [a, b].filter((h): h is string => h !== null);
     if (initial.length > 0) setSequence(initial);
   }, [state.anchorA, state.anchorB, state.colors]);
+
+  // Auto-seed: sort all palette colors by lightness when no anchors are set.
+  // This gives a sensible default gradient without requiring manual tapping.
+  const autoSeeded = useRef(false);
+  useEffect(() => {
+    if (autoSeeded.current || colorSpace.length === 0) return;
+    if (state.anchorA !== null || state.anchorB !== null) return;
+    autoSeeded.current = true;
+    setSequence([...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L));
+  }, [colorSpace, state.anchorA, state.anchorB]);
 
   // Candidates only for the currently open gap — O(colorSpace) instead of
   // O(colorSpace × pairs) on every mode or sequence change.
