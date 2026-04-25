@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IonBackButton,
   IonButton,
@@ -16,6 +16,7 @@ import { usePalette } from "../lib/palette-store";
 import {
   gradientBetween,
   hexToOklab,
+  sortGradient,
   swatchMeta,
   scoreGradientOutliers,
   type GradientMode,
@@ -30,6 +31,8 @@ const MODE_DESC: Record<GradientMode, string> = {
   saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
   hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
 };
+
+type DragSrc = { hex: string; seqIdx?: number };
 
 export default function Gradients() {
   const { state } = usePalette();
@@ -46,9 +49,10 @@ export default function Gradients() {
   );
   const isDmcMode = dmcSet.length > 0;
 
-  // Sequence: ordered set-points the user builds from the shelf.
+  // Sequence: ordered colors the user arranges.
   const [sequence, setSequence] = useState<string[]>([]);
-  // Pre-seed from anchorA/B the first time they appear (runs after Seeder effects settle).
+
+  // Pre-seed from anchorA/B.
   const seededFromAnchors = useRef(false);
   useEffect(() => {
     if (seededFromAnchors.current) return;
@@ -56,22 +60,103 @@ export default function Gradients() {
     seededFromAnchors.current = true;
     const a = state.colors.find((c) => c.id === state.anchorA)?.hex ?? null;
     const b = state.colors.find((c) => c.id === state.anchorB)?.hex ?? null;
-    const initial = [a, b].filter((h): h is string => h !== null);
-    if (initial.length > 0) setSequence(initial);
-  }, [state.anchorA, state.anchorB, state.colors]);
+    const anchors = [a, b].filter((h): h is string => h !== null);
+    if (anchors.length === 2) {
+      setSequence(sortGradient(colorSpace, anchors[0], anchors[1]));
+    } else if (anchors.length > 0) {
+      setSequence(anchors);
+    }
+  }, [state.anchorA, state.anchorB, state.colors, colorSpace]);
 
-  // Auto-seed: pick the two lightest/darkest palette colors as endpoints,
-  // then fill in only the palette colors that perceptually lie between them.
+  // Auto-seed: sort all palette colors darkest→lightest when no anchors.
   const autoSeeded = useRef(false);
   useEffect(() => {
     if (autoSeeded.current || colorSpace.length === 0) return;
     if (state.anchorA !== null || state.anchorB !== null) return;
     autoSeeded.current = true;
-    setSequence([...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L));
+    const byL = [...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L);
+    setSequence(sortGradient(colorSpace, byL[0], byL[byL.length - 1]));
   }, [colorSpace, state.anchorA, state.anchorB]);
 
-  // Candidates only for the currently open gap — O(colorSpace) instead of
-  // O(colorSpace × pairs) on every mode or sequence change.
+  // ── Drag-to-position ────────────────────────────────────────────────────
+  const [drag, setDrag] = useState<DragSrc | null>(null);
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const [dropAt, setDropAt] = useState(-1);
+  const pendingDragRef = useRef<{ src: DragSrc; startX: number; startY: number } | null>(null);
+  const seqElMap = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  const findDropAt = useCallback((px: number, py: number, seqLen: number): number => {
+    const entries: Array<{ i: number; r: DOMRect }> = [];
+    seqElMap.current.forEach((el, i) => { if (el) entries.push({ i, r: el.getBoundingClientRect() }); });
+    entries.sort((a, b) => a.r.top !== b.r.top ? a.r.top - b.r.top : a.r.left - b.r.left);
+    for (const { i, r } of entries) {
+      if (py < r.top + r.height * 0.5 || (py < r.bottom && px < r.left + r.width * 0.5)) return i;
+    }
+    return seqLen;
+  }, []);
+
+  // Keep refs current for effect callbacks.
+  const dragRef = useRef(drag);
+  const seqRef = useRef(sequence);
+  const findDropAtRef = useRef(findDropAt);
+  useEffect(() => { dragRef.current = drag; }, [drag]);
+  useEffect(() => { seqRef.current = sequence; }, [sequence]);
+  useEffect(() => { findDropAtRef.current = findDropAt; }, [findDropAt]);
+
+  useEffect(() => {
+    const THRESHOLD = 8;
+
+    const onMove = (e: PointerEvent) => {
+      const pending = pendingDragRef.current;
+      const currentDrag = dragRef.current;
+      if (pending && !currentDrag) {
+        const dx = e.clientX - pending.startX;
+        const dy = e.clientY - pending.startY;
+        if (Math.sqrt(dx * dx + dy * dy) > THRESHOLD) {
+          setDrag(pending.src);
+          setDragPos({ x: e.clientX, y: e.clientY });
+          pendingDragRef.current = null;
+        }
+        return;
+      }
+      if (currentDrag) {
+        setDragPos({ x: e.clientX, y: e.clientY });
+        setDropAt(findDropAtRef.current(e.clientX, e.clientY, seqRef.current.length));
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      pendingDragRef.current = null;
+      const src = dragRef.current;
+      if (src) {
+        const idx = findDropAtRef.current(e.clientX, e.clientY, seqRef.current.length);
+        setSequence(prev => {
+          if (src.seqIdx !== undefined) {
+            const next = prev.filter((_, i) => i !== src.seqIdx!);
+            const adj = src.seqIdx! < idx ? idx - 1 : idx;
+            next.splice(Math.max(0, Math.min(next.length, adj)), 0, src.hex);
+            return next;
+          } else {
+            if (prev.includes(src.hex)) return prev;
+            const next = [...prev];
+            next.splice(Math.max(0, Math.min(next.length, idx)), 0, src.hex);
+            return next;
+          }
+        });
+      }
+      setDrag(null);
+      setDropAt(-1);
+    };
+
+    document.addEventListener("pointermove", onMove, { passive: true });
+    document.addEventListener("pointerup", onUp);
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+  }, []); // stable — uses refs for current values
+
+  // ── Candidate picker ────────────────────────────────────────────────────
   const activeCandidates = useMemo(() => {
     if (insertAt === null || insertAt < 1 || insertAt > sequence.length - 1) return [];
     const hexA = sequence[insertAt - 1];
@@ -86,11 +171,6 @@ export default function Gradients() {
     const results = scoreGradientOutliers(sequence);
     return new Map(results.map((r) => [r.hex, r.isOutlier]));
   }, [sequence]);
-
-  function appendToSequence(hex: string) {
-    setSequence((prev) => [...prev, hex]);
-    setInsertAt(null);
-  }
 
   function removeFromSequence(index: number) {
     setSequence((prev) => prev.filter((_, i) => i !== index));
@@ -120,7 +200,7 @@ export default function Gradients() {
     setSavedMsg("Saved to downloads");
   }
 
-  // Empty state — no colors in scope yet.
+  // Empty state.
   if (colorSpace.length === 0) {
     return (
       <IonPage>
@@ -163,6 +243,7 @@ export default function Gradients() {
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
+
         {/* ── Mode selector ─────────────────────────────────────────── */}
         <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
           {MODES.map((m) => (
@@ -191,7 +272,7 @@ export default function Gradients() {
 
         {/* ── Color shelf ───────────────────────────────────────────── */}
         <ShelfLabel>
-          {isDmcMode ? "DMC set" : "Palette"} — tap to add to sequence
+          {isDmcMode ? "DMC set" : "Palette"} — drag to position, tap to append
         </ShelfLabel>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
           {colorSpace.map((hex) => {
@@ -204,7 +285,14 @@ export default function Gradients() {
                 aria-label={`Add ${hex} to sequence`}
                 title={dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex}
                 disabled={inSeq}
-                onClick={() => appendToSequence(hex)}
+                onClick={() => {
+                  if (!drag) setSequence(prev => prev.includes(hex) ? prev : [...prev, hex]);
+                  setInsertAt(null);
+                }}
+                onPointerDown={(e) => {
+                  if (inSeq) return;
+                  pendingDragRef.current = { src: { hex }, startX: e.clientX, startY: e.clientY };
+                }}
                 style={{
                   width: 40,
                   height: 40,
@@ -214,15 +302,16 @@ export default function Gradients() {
                     ? "3px solid var(--ion-color-primary)"
                     : "2px solid rgba(0,0,0,0.12)",
                   opacity: inSeq ? 0.3 : 1,
-                  cursor: inSeq ? "default" : "pointer",
+                  cursor: inSeq ? "default" : "grab",
                   flexShrink: 0,
+                  touchAction: "none",
                 }}
               />
             );
           })}
         </div>
 
-        {/* ── Sequence builder ──────────────────────────────────────── */}
+        {/* ── Sequence ──────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
           <ShelfLabel style={{ margin: 0 }}>
             Sequence{sequence.length > 0 ? ` (${sequence.length})` : ""}
@@ -245,10 +334,11 @@ export default function Gradients() {
             </button>
           )}
         </div>
+
         {sequence.length === 0 ? (
           <IonText color="medium">
             <p style={{ fontSize: 13, marginTop: 0 }}>
-              Tap colors above to build your sequence — the gradient is whatever you place here.
+              Drag colors above into this area to position them, or tap to append.
             </p>
           </IonText>
         ) : (
@@ -261,15 +351,33 @@ export default function Gradients() {
               marginBottom: 8,
             }}
           >
+            {/* Drop zone at the very start */}
+            {drag && dropAt === 0 && <DropZone />}
+
             {sequence.map((hex, i) => {
               const isOutlier = outlierMap.get(hex) ?? false;
               const dmcEntry = isDmcMode ? dmcSet.find((d) => d.hex === hex) : null;
+              const isBeingDragged = drag?.seqIdx === i;
               return (
                 <React.Fragment key={`${hex}-${i}`}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div
+                    ref={(el: HTMLDivElement | null) => {
+                      if (el) seqElMap.current.set(i, el);
+                      else seqElMap.current.delete(i);
+                    }}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      opacity: isBeingDragged ? 0.3 : 1,
+                    }}
+                  >
                     <div style={{ position: "relative" }}>
                       <div
-                        title={isOutlier ? "Perceptual outlier — this color may not blend smoothly with its neighbours. Try removing it or inserting a bridging color with the + button." : undefined}
+                        title={isOutlier ? "Perceptual outlier — may not blend smoothly. Try removing it or using + to insert a bridging color." : undefined}
+                        onPointerDown={(e) => {
+                          pendingDragRef.current = { src: { hex, seqIdx: i }, startX: e.clientX, startY: e.clientY };
+                        }}
                         style={{
                           width: 44,
                           height: 44,
@@ -278,6 +386,8 @@ export default function Gradients() {
                           border: isOutlier
                             ? "3px solid #f59e0b"
                             : "2px solid rgba(0,0,0,0.10)",
+                          cursor: "grab",
+                          touchAction: "none",
                         }}
                       />
                       <button
@@ -308,52 +418,57 @@ export default function Gradients() {
                     </span>
                   </div>
 
-                  {/* + button between i and i+1 */}
-                  {i < sequence.length - 1 && (
-                    <button
-                      type="button"
-                      aria-label={`Find colors between position ${i + 1} and ${i + 2}`}
-                      onClick={() => setInsertAt(insertAt === i + 1 ? null : i + 1)}
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: "50%",
-                        marginTop: 9,
-                        background:
-                          insertAt === i + 1
+                  {/* Drop zone / + button between items */}
+                  {drag ? (
+                    dropAt === i + 1 && <DropZone />
+                  ) : (
+                    i < sequence.length - 1 && (
+                      <button
+                        type="button"
+                        aria-label={`Find colors between position ${i + 1} and ${i + 2}`}
+                        onClick={() => setInsertAt(insertAt === i + 1 ? null : i + 1)}
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: "50%",
+                          marginTop: 9,
+                          background: insertAt === i + 1
                             ? "var(--ion-color-primary)"
                             : "rgba(0,0,0,0.07)",
-                        color:
-                          insertAt === i + 1
+                          color: insertAt === i + 1
                             ? "white"
                             : "var(--ion-color-medium)",
-                        border: "none",
-                        cursor: "pointer",
-                        fontSize: 18,
-                        lineHeight: "24px",
-                        textAlign: "center",
-                        padding: 0,
-                        flexShrink: 0,
-                      }}
-                    >
-                      +
-                    </button>
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 18,
+                          lineHeight: "24px",
+                          textAlign: "center",
+                          padding: 0,
+                          flexShrink: 0,
+                        }}
+                      >
+                        +
+                      </button>
+                    )
                   )}
                 </React.Fragment>
               );
             })}
+
+            {/* Drop zone at the end */}
+            {drag && dropAt === sequence.length && <DropZone />}
           </div>
         )}
 
-        {/* Outlier legend — only shown when at least one item is flagged */}
+        {/* Outlier legend */}
         {[...outlierMap.values()].some(Boolean) && (
           <p style={{ fontSize: 12, color: "#f59e0b", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, border: "3px solid #f59e0b", flexShrink: 0 }} />
-            Amber border = perceptual outlier. This color may not blend smoothly — remove it or use + to insert a bridging color.
+            Amber border = perceptual outlier. Remove it or use + to insert a bridging color.
           </p>
         )}
 
-        {/* ── Candidate picker for the active gap ───────────────────── */}
+        {/* ── Candidate picker ──────────────────────────────────────── */}
         {insertAt !== null && (
           <div
             style={{
@@ -401,7 +516,7 @@ export default function Gradients() {
           </div>
         )}
 
-        {/* ── Preview strip — solid blocks, no blending ─────────────── */}
+        {/* ── Preview strip — solid blocks ──────────────────────────── */}
         {sequence.length >= 2 && (
           <div
             style={{
@@ -439,7 +554,42 @@ export default function Gradients() {
           onDidDismiss={() => setSavedMsg(null)}
         />
       </IonContent>
+
+      {/* ── Drag ghost ────────────────────────────────────────────────── */}
+      {drag && (
+        <div
+          style={{
+            position: "fixed",
+            left: dragPos.x - 22,
+            top: dragPos.y - 22,
+            width: 44,
+            height: 44,
+            borderRadius: 8,
+            background: drag.hex,
+            border: "3px solid white",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+            pointerEvents: "none",
+            zIndex: 9999,
+            opacity: 0.9,
+          }}
+        />
+      )}
     </IonPage>
+  );
+}
+
+function DropZone() {
+  return (
+    <div
+      style={{
+        width: 4,
+        height: 52,
+        borderRadius: 2,
+        background: "var(--ion-color-primary)",
+        flexShrink: 0,
+        alignSelf: "flex-start",
+      }}
+    />
   );
 }
 
