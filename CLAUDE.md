@@ -3,7 +3,7 @@
 ## PR workflow
 - **Auto-merge all PRs** — do not ask the user to review or merge. Once CI passes, squash-merge immediately.
 - **Watch for deploy** after merging — poll `https://jhedin.github.io/picture-to-palette/` for a new bundle filename, then tell the user the deploy is live and what SHA to look for in the Capture header.
-- Create PRs as draft; convert to ready and merge once CI is green.
+- Create PRs as **ready for review** (not draft) so they can be merged immediately after CI.
 
 ## Dev branch
 All work goes on `claude/continue-handoff-Ayn42` → PR into `main`.
