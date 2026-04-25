@@ -67,11 +67,7 @@ export default function Gradients() {
     if (autoSeeded.current || colorSpace.length === 0) return;
     if (state.anchorA !== null || state.anchorB !== null) return;
     autoSeeded.current = true;
-    const byL = [...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L);
-    const darkest = byL[0];
-    const lightest = byL[byL.length - 1];
-    const between = gradientBetween(colorSpace, darkest, lightest, "natural");
-    setSequence([darkest, ...between, lightest]);
+    setSequence([...colorSpace].sort((a, b) => hexToOklab(a).L - hexToOklab(b).L));
   }, [colorSpace, state.anchorA, state.anchorB]);
 
   // Candidates only for the currently open gap — O(colorSpace) instead of
