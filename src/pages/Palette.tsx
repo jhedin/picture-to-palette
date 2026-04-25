@@ -134,9 +134,10 @@ export default function Palette() {
                     width: 22,
                     height: 22,
                     borderRadius: "50%",
-                    border: "none",
-                    background: "rgba(0,0,0,0.6)",
-                    color: "var(--ion-background-color, #fff)",
+                    border: "2px solid #888",
+                    background: "#fff",
+                    color: "#111",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.4)",
                     cursor: "pointer",
                   }}
                 >
