@@ -172,7 +172,7 @@ export default function Capture() {
               <IonBackButton defaultHref="/palette" text="Palette" />
             </IonButtons>
           )}
-          <IonTitle>Capture <span style={{ fontSize: 11, opacity: 0.5, fontWeight: 400 }}>({__GIT_SHA__})</span></IonTitle>
+          <IonTitle>Capture <span style={{ fontSize: 13, fontWeight: 600, fontFamily: "monospace" }}>{__GIT_SHA__}</span></IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent className="ion-padding">
