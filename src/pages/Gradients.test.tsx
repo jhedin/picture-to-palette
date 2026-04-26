@@ -130,4 +130,49 @@ describe("Gradients page", () => {
     await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
     expect(screen.queryByText(/available dmc threads/i)).not.toBeInTheDocument();
   });
+
+  it("tapping a shelf color pins it (shows pinned in panel)", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /clear/i }));
+    // Clear so there's a shelf
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument(),
+    );
+    // Tap a shelf color to add+pin it
+    await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
+    // Click the seq item to open the panel
+    // The seq item is no longer a button so find by title
+    const seqItem = document.querySelector(`[title="#FF0000"]`) as HTMLElement;
+    await userEvent.click(seqItem);
+    await waitFor(() => expect(screen.getByRole("button", { name: /pinned/i })).toBeInTheDocument());
+  });
+
+  it("alternatives panel opens on sequence item click and closes on ×", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /clear/i }));
+    // Click a seq item to open panel
+    const seqItem = document.querySelector(`[title="#FF0000"]`) as HTMLElement
+      ?? document.querySelector(`[title^="#"]`) as HTMLElement;
+    await userEvent.click(seqItem);
+    await waitFor(() => expect(screen.getByRole("button", { name: /close panel/i })).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /close panel/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /close panel/i })).not.toBeInTheDocument());
+  });
+
+  it("slider min is clamped to pinned count", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
+    await waitFor(() => screen.getByRole("button", { name: /clear/i }));
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument(),
+    );
+    // Pin two colors via shelf taps
+    await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    await userEvent.click(screen.getByRole("button", { name: /add #0000FF to sequence/i }));
+    await waitFor(() => expect(inSequence("#0000FF")).toBe(true));
+    const slider = screen.getByRole("slider");
+    expect(Number(slider.getAttribute("min"))).toBe(2);
+  });
 });
