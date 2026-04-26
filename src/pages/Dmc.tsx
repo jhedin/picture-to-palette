@@ -12,7 +12,7 @@ import {
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
-import { matchToDmc, expandDmcPalette } from "../lib/dmc-match";
+import { matchToDmc } from "../lib/dmc-match";
 import { DMC_COLORS, type DmcColor } from "../lib/dmc-colors";
 
 export default function Dmc() {
@@ -36,12 +36,7 @@ export default function Dmc() {
     dispatch({ type: "SET_DMC_SET", colors: matched });
   }
 
-  function handleExpandShades() {
-    const expanded = expandDmcPalette(state.dmcSet, 1);
-    dispatch({ type: "SET_DMC_SET", colors: expanded });
-  }
-
-  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+const [copyMsg, setCopyMsg] = useState<string | null>(null);
 
   const handleCopyList = useCallback(async () => {
     const text = state.dmcSet
@@ -235,10 +230,7 @@ export default function Dmc() {
         </div>
 
         {/* Footer buttons */}
-        <IonButton fill="outline" expand="block" onClick={handleExpandShades}>
-          Expand shades
-        </IonButton>
-        {state.dmcSet.length > 0 && (
+{state.dmcSet.length > 0 && (
           <IonButton fill="outline" expand="block" onClick={handleCopyList}>
             {copyMsg ?? `Copy thread list (${state.dmcSet.length})`}
           </IonButton>

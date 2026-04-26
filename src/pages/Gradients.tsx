@@ -56,12 +56,13 @@ const MODE_DESC: Record<GradientMode, string> = {
   hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
   shade:      "Hue-shifted shading ramp — shadows drift cool, highlights drift warm, from the median-lightness midtone.",
 };
-import { findDmcBridges, expandDmcPalette } from "../lib/dmc-match";
+import { idealDmcPositions, nearestUnusedDmc } from "../lib/dmc-match";
+import { DMC_COLORS } from "../lib/dmc-colors";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 
 export default function Gradients() {
-  const { state } = usePalette();
+  const { state, dispatch } = usePalette();
   const history = useHistory();
   const location = useLocation();
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -70,18 +71,34 @@ export default function Gradients() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const isDmcMode = searchParams.get("mode") === "dmc" && dmcSet.length > 0;
 
-  // Extra DMC colors discovered via "Fill gaps" or "Expand shades" — local to this page.
-  const [dmcBridges, setDmcBridges] = useState<DmcColor[]>([]);
-  const [dmcShades, setDmcShades] = useState<DmcColor[]>([]);
-  const dmcPool = useMemo(
-    () => isDmcMode ? [...dmcSet, ...dmcBridges, ...dmcShades] : [],
-    [isDmcMode, dmcSet, dmcBridges, dmcShades],
-  );
+  // In DMC mode, colorSpace = matched threads + full DMC library filtered to the
+  // perp cylinder between the current anchors (wider threshold so the shelf is
+  // generous; gradientBetween/idealDmcPositions do tighter filtering when building
+  // the actual sequence).
+  const colorSpace: string[] = useMemo(() => {
+    if (!isDmcMode) return state.colors.map((c) => c.hex);
+    const base = new Set(dmcSet.map((d) => d.hex));
+    const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
+    const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
+    if (anchorAHex && anchorBHex) {
+      const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+      const between = gradientBetween(allDmcHexes, anchorAHex, anchorBHex, "natural",
+        { threshold: 0.40, absCap: 0.20 });
+      for (const h of between) base.add(h);
+    }
+    return [...base];
+  }, [isDmcMode, dmcSet, state.anchorA, state.anchorB, state.colors]);
 
-  const colorSpace: string[] = useMemo(
-    () => isDmcMode ? dmcPool.map((d) => d.hex) : state.colors.map((c) => c.hex),
-    [isDmcMode, dmcPool, state.colors],
-  );
+  const dmcPool = useMemo(() => {
+    if (!isDmcMode) return [];
+    const result: DmcColor[] = [];
+    const seen = new Set<string>();
+    for (const hex of colorSpace) {
+      const entry = DMC_COLORS.find((d) => d.hex === hex);
+      if (entry && !seen.has(entry.id)) { result.push(entry); seen.add(entry.id); }
+    }
+    return result;
+  }, [isDmcMode, colorSpace]);
 
   const [sortMode, setSortMode] = useState<GradientMode>("natural");
   const [sequence, setSequence] = useState<string[]>([]);
@@ -143,8 +160,12 @@ export default function Gradients() {
     const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
     const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
     let seeded: string[];
-    if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
-      // Anchors set: start with A, the colors that lie between them, and B.
+    if (isDmcMode && anchorAHex && anchorBHex) {
+      // DMC mode: generate 1 ideal OKLab intermediate and match to nearest DMC thread.
+      const intermediates = idealDmcPositions(anchorAHex, anchorBHex, 1,
+        [anchorAHex, anchorBHex]);
+      seeded = [anchorAHex, ...intermediates, anchorBHex];
+    } else if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
       const between = gradientBetween(colorSpace, anchorAHex, anchorBHex, sortMode, perpOpts);
       seeded = [anchorAHex, ...between, anchorBHex];
     } else {
@@ -181,11 +202,33 @@ export default function Gradients() {
     setSequence((prev) => {
       if (effective >= prev.length) {
         const toAdd = effective - prev.length;
+        if (toAdd <= 0) return prev;
+
+        if (isDmcMode && prev.length >= 2) {
+          // DMC mode: fill the largest perceptual gap with the nearest unused DMC thread.
+          let result = [...prev];
+          const used = new Set(result);
+          for (let step = 0; step < toAdd; step++) {
+            const labs = result.map(hexToOklab);
+            let maxDistSq = 0, gapIdx = 0;
+            for (let i = 0; i < result.length - 1; i++) {
+              const a = labs[i], b = labs[i + 1];
+              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
+              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+            }
+            const a = labs[gapIdx], b = labs[gapIdx + 1];
+            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            const match = nearestUnusedDmc(ideal, used);
+            if (!match) break;
+            used.add(match.hex);
+            result.splice(gapIdx + 1, 0, match.hex);
+          }
+          return result;
+        }
+
         const shelf = colorSpace.filter((h) => !prev.includes(h));
-        if (shelf.length === 0 || toAdd <= 0) return prev;
+        if (shelf.length === 0) return prev;
         const allSorted = buildSorted(colorSpace);
-        // When there are endpoints, only add colors that perceptually lie between them.
-        // gradientBetween filters by perpendicular distance so off-axis colors (taupe between blues) are excluded.
         let candidatePool: string[];
         if (prev.length >= 2) {
           const firstHex = prev[0];
@@ -220,28 +263,11 @@ export default function Gradients() {
     });
   }
 
-  function handleFillGaps() {
-    const known = dmcPool.map((d) => d.hex);
-    const bridges = findDmcBridges(sequence, known);
-    if (bridges.length > 0) {
-      const newHexes = bridges.map((d) => d.hex);
-      setDmcBridges((prev) => {
-        const existingIds = new Set(dmcPool.map((d) => d.id));
-        return [...prev, ...bridges.filter((d) => !existingIds.has(d.id))];
-      });
-      setPinnedHexes((prev) => {
-        const next = [...prev];
-        for (const h of newHexes) if (!next.includes(h)) next.push(h);
-        return next;
-      });
+  function handleAddToShelf() {
+    for (const hex of sequence) {
+      const dmc = dmcPool.find((d) => d.hex === hex);
+      if (dmc) dispatch({ type: "ADD_DMC", color: dmc });
     }
-  }
-
-  function handleExpandShades() {
-    const expanded = expandDmcPalette(dmcPool, 1);
-    const existingIds = new Set(dmcPool.map((d) => d.id));
-    const newShades = expanded.filter((d) => !existingIds.has(d.id));
-    if (newShades.length > 0) setDmcShades((prev) => [...prev, ...newShades]);
   }
 
   // ── dnd-kit ──────────────────────────────────────────────────────────────
@@ -728,13 +754,8 @@ export default function Gradients() {
 
           {/* ── DMC actions ───────────────────────────────────────────── */}
           {isDmcMode && sequence.length >= 2 && (
-            <IonButton fill="outline" expand="block" onClick={handleFillGaps} style={{ marginBottom: 8 }}>
-              Fill gaps with DMC colors
-            </IonButton>
-          )}
-          {isDmcMode && (
-            <IonButton fill="outline" expand="block" onClick={handleExpandShades} style={{ marginBottom: 8 }}>
-              Expand shades
+            <IonButton fill="outline" expand="block" onClick={handleAddToShelf} style={{ marginBottom: 8 }}>
+              Add to shelf
             </IonButton>
           )}
 

@@ -83,6 +83,59 @@ export function expandDmcPalette(base: DmcColor[], stepsPerColor = 1): DmcColor[
 }
 
 /**
+ * Return the k DMC threads closest to evenly-spaced OKLab positions along
+ * the straight line from anchorA to anchorB.  Greedy: each picked thread is
+ * excluded from subsequent picks so the result has no duplicates.
+ */
+export function idealDmcPositions(
+  anchorA: string,
+  anchorB: string,
+  k: number,
+  exclude: Iterable<string> = [],
+): string[] {
+  if (k <= 0) return [];
+  const aLab = hexToOklab(anchorA);
+  const bLab = hexToOklab(anchorB);
+  const entries = dmcEntries();
+  const used = new Set(exclude);
+  const result: string[] = [];
+  for (let i = 1; i <= k; i++) {
+    const t = i / (k + 1);
+    const ideal = {
+      L: aLab.L + t * (bLab.L - aLab.L),
+      a: aLab.a + t * (bLab.a - aLab.a),
+      b: aLab.b + t * (bLab.b - aLab.b),
+    };
+    let bestDistSq = Infinity, bestHex: string | null = null;
+    for (const { color, lab } of entries) {
+      if (used.has(color.hex)) continue;
+      const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+      if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = color.hex; }
+    }
+    if (bestHex) { used.add(bestHex); result.push(bestHex); }
+  }
+  return result;
+}
+
+/**
+ * Find the nearest unused DMC thread to an arbitrary OKLab position.
+ * Used when filling the largest perceptual gap in a sequence.
+ */
+export function nearestUnusedDmc(
+  ideal: { L: number; a: number; b: number },
+  exclude: Set<string>,
+): DmcColor | null {
+  const entries = dmcEntries();
+  let best: DmcColor | null = null, bestDistSq = Infinity;
+  for (const { color, lab } of entries) {
+    if (exclude.has(color.hex)) continue;
+    const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+    if (dSq < bestDistSq) { bestDistSq = dSq; best = color; }
+  }
+  return best;
+}
+
+/**
  * Given a sorted gradient sequence, find DMC threads from the full catalog
  * that lie perceptually between each adjacent pair and are not already in
  * `knownHexes`.  Returns new candidate threads to offer as shelf additions.
