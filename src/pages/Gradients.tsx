@@ -273,6 +273,13 @@ export default function Gradients() {
     }
   }
 
+  function handleExpandShades() {
+    const expanded = expandDmcPalette(dmcPool, 1);
+    const existingIds = new Set(dmcPool.map((d) => d.id));
+    const newShades = expanded.filter((d) => !existingIds.has(d.id));
+    if (newShades.length > 0) setDmcShades((prev) => [...prev, ...newShades]);
+  }
+
   // ── dnd-kit ──────────────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -759,6 +766,11 @@ export default function Gradients() {
           {isDmcMode && sequence.length >= 2 && (
             <IonButton fill="outline" expand="block" onClick={handleAddToShelf} style={{ marginBottom: 8 }}>
               Add to shelf
+            </IonButton>
+          )}
+          {isDmcMode && (
+            <IonButton fill="outline" expand="block" onClick={handleExpandShades} style={{ marginBottom: 8 }}>
+              Expand shades
             </IonButton>
           )}
 
