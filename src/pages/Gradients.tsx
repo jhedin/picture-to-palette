@@ -28,45 +28,88 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useHistory } from "react-router-dom";
+import { useHistory, useLocation } from "react-router-dom";
 import { usePalette } from "../lib/palette-store";
+import type { DmcColor } from "../lib/palette-store";
 import {
   hexToOklab,
   sortGradient,
+  pickEvenly,
   swatchMeta,
   scoreGradientOutliers,
 } from "../lib/color";
+import { findDmcBridges } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
+  const location = useLocation();
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
   const dmcSet = state.dmcSet;
-  const colorSpace: string[] = useMemo(
-    () => (dmcSet.length > 0 ? dmcSet.map((d) => d.hex) : state.colors.map((c) => c.hex)),
-    [dmcSet, state.colors],
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const isDmcMode = searchParams.get("mode") === "dmc" && dmcSet.length > 0;
+
+  // Extra DMC colors discovered via "Fill gaps" — local to this page.
+  const [dmcBridges, setDmcBridges] = useState<DmcColor[]>([]);
+  const dmcPool = useMemo(
+    () => isDmcMode ? [...dmcSet, ...dmcBridges] : [],
+    [isDmcMode, dmcSet, dmcBridges],
   );
-  const isDmcMode = dmcSet.length > 0;
+
+  const colorSpace: string[] = useMemo(
+    () => isDmcMode ? dmcPool.map((d) => d.hex) : state.colors.map((c) => c.hex),
+    [isDmcMode, dmcPool, state.colors],
+  );
 
   const [sequence, setSequence] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [maxColors, setMaxColors] = useState<number>(0); // 0 = not yet set
 
-  const seeded = useRef(false);
-  useEffect(() => {
-    if (seeded.current || colorSpace.length === 0) return;
-    seeded.current = true;
+  // Build a sorted sequence from the current anchors (or lightness fallback).
+  function buildSorted(cs: string[]): string[] {
     const a = state.colors.find((c) => c.id === state.anchorA)?.hex;
     const b = state.colors.find((c) => c.id === state.anchorB)?.hex;
-    if (a && b) {
-      setSequence(sortGradient(colorSpace, a, b));
-    } else {
-      const byL = [...colorSpace].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
-      setSequence(sortGradient(colorSpace, byL[0], byL[byL.length - 1]));
-    }
-  }, [colorSpace, state.anchorA, state.anchorB, state.colors]);
+    if (a && b) return sortGradient(cs, a, b);
+    const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
+    return byL.length >= 2 ? sortGradient(cs, byL[0], byL[byL.length - 1]) : cs;
+  }
 
+  // Seed sequence on first load and whenever anchors change.
+  const prevAnchorKey = useRef("");
+  useEffect(() => {
+    if (colorSpace.length === 0) return;
+    const anchorKey = `${state.anchorA ?? ""}|${state.anchorB ?? ""}`;
+    const anchorsChanged = anchorKey !== prevAnchorKey.current && !!(state.anchorA && state.anchorB);
+    // Only re-seed automatically: on first load, or when anchors newly arrive.
+    if (sequence.length > 0 && !anchorsChanged) return;
+    prevAnchorKey.current = anchorKey;
+    const sorted = buildSorted(colorSpace);
+    const limit = maxColors > 0 ? maxColors : colorSpace.length;
+    setSequence(limit < sorted.length ? pickEvenly(sorted, limit) : sorted);
+    if (maxColors === 0) setMaxColors(colorSpace.length);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorSpace, state.anchorA, state.anchorB]);
+
+  function applyMaxColors(n: number) {
+    setMaxColors(n);
+    const sorted = buildSorted(colorSpace);
+    setSequence(n < sorted.length ? pickEvenly(sorted, n) : sorted);
+  }
+
+  function handleFillGaps() {
+    const known = dmcPool.map((d) => d.hex);
+    const bridges = findDmcBridges(sequence, known);
+    if (bridges.length > 0) {
+      setDmcBridges((prev) => {
+        const existingIds = new Set(dmcPool.map((d) => d.id));
+        return [...prev, ...bridges.filter((d) => !existingIds.has(d.id))];
+      });
+    }
+  }
+
+  // ── dnd-kit ──────────────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
@@ -107,7 +150,6 @@ export default function Gradients() {
   }, [sequence]);
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
-
   const activeHex = activeId
     ? activeId.startsWith("shelf:") ? activeId.slice(6) : activeId
     : null;
@@ -161,7 +203,24 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          {/* ── Gradient strip ────────────────────────────────────────────── */}
+          {/* ── Max-colors slider ─────────────────────────────────────── */}
+          {colorSpace.length > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 12, color: "var(--ion-color-medium)", whiteSpace: "nowrap" }}>
+                Colors: {maxColors > 0 ? maxColors : colorSpace.length}
+              </span>
+              <input
+                type="range"
+                min={1}
+                max={colorSpace.length}
+                value={maxColors > 0 ? maxColors : colorSpace.length}
+                onChange={(e) => applyMaxColors(Number(e.target.value))}
+                style={{ flex: 1 }}
+              />
+            </div>
+          )}
+
+          {/* ── Gradient strip ────────────────────────────────────────── */}
           {sequence.length === 0 ? (
             <IonText color="medium"><p style={{ fontSize: 13 }}>Add colors from the shelf below.</p></IonText>
           ) : (
@@ -182,7 +241,7 @@ export default function Gradients() {
               <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
                 <div style={{ display: "flex", marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
                   {sequence.map((hex, i) => {
-                    const dmcEntry = isDmcMode ? dmcSet.find((d) => d.hex === hex) : null;
+                    const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                     return (
                       <SeqItem
                         key={hex}
@@ -212,15 +271,15 @@ export default function Gradients() {
             </>
           )}
 
-          {/* ── Shelf ─────────────────────────────────────────────────────── */}
+          {/* ── Shelf ─────────────────────────────────────────────────── */}
           {shelf.length > 0 && (
             <>
               <p style={{ margin: "12px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
-                {isDmcMode ? "DMC set" : "Palette"} — drag to position, tap to append
+                {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position, tap to append
               </p>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                 {shelf.map((hex) => {
-                  const dmcEntry = isDmcMode ? dmcSet.find((d) => d.hex === hex) : null;
+                  const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                   return (
                     <ShelfItem
                       key={hex}
@@ -232,6 +291,13 @@ export default function Gradients() {
                 })}
               </div>
             </>
+          )}
+
+          {/* ── DMC fill-gaps ─────────────────────────────────────────── */}
+          {isDmcMode && sequence.length >= 2 && (
+            <IonButton fill="outline" expand="block" onClick={handleFillGaps} style={{ marginBottom: 8 }}>
+              Fill gaps with DMC colors
+            </IonButton>
           )}
 
           <DragOverlay>

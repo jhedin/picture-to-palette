@@ -1,4 +1,4 @@
-import { hexToOklab, shadeRamp, type Oklab } from "./color";
+import { hexToOklab, shadeRamp, gradientBetween, type Oklab } from "./color";
 import { DMC_COLORS, type DmcColor } from "./dmc-colors";
 
 // Cache OKLab values for the full DMC palette so repeated lookups are O(n)
@@ -76,6 +76,34 @@ export function expandDmcPalette(base: DmcColor[], stepsPerColor = 1): DmcColor[
       if (!seen.has(match.id)) {
         seen.add(match.id);
         result.push(match);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Given a sorted gradient sequence, find DMC threads from the full catalog
+ * that lie perceptually between each adjacent pair and are not already in
+ * `knownHexes`.  Returns new candidate threads to offer as shelf additions.
+ */
+export function findDmcBridges(
+  sequence: string[],
+  knownHexes: string[] = [],
+): DmcColor[] {
+  if (sequence.length < 2) return [];
+  const allHexes = DMC_COLORS.map((d) => d.hex);
+  const known = new Set([...sequence, ...knownHexes]);
+  const foundHex = new Set<string>();
+  const result: DmcColor[] = [];
+
+  for (let i = 0; i < sequence.length - 1; i++) {
+    const between = gradientBetween(allHexes, sequence[i], sequence[i + 1]);
+    for (const hex of between) {
+      if (!known.has(hex) && !foundHex.has(hex)) {
+        foundHex.add(hex);
+        const dmc = DMC_COLORS.find((d) => d.hex === hex);
+        if (dmc) result.push(dmc);
       }
     }
   }
