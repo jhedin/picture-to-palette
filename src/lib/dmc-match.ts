@@ -82,16 +82,24 @@ export function expandDmcPalette(base: DmcColor[], stepsPerColor = 1): DmcColor[
   return result;
 }
 
+// A preferred thread is accepted even if it's up to this many times farther
+// than the globally nearest match — avoids adding new threads unnecessarily.
+const PREFERRED_TOLERANCE_SQ = 1.5 * 1.5; // compare squared distances
+
 /**
  * Return the k DMC threads closest to evenly-spaced OKLab positions along
  * the straight line from anchorA to anchorB.  Greedy: each picked thread is
  * excluded from subsequent picks so the result has no duplicates.
+ *
+ * Pass `preferred` (e.g. the user's already-matched dmcSet hexes) to bias the
+ * algorithm toward reusing existing threads before pulling new ones.
  */
 export function idealDmcPositions(
   anchorA: string,
   anchorB: string,
   k: number,
   exclude: Iterable<string> = [],
+  preferred: Set<string> = new Set(),
 ): string[] {
   if (k <= 0) return [];
   const aLab = hexToOklab(anchorA);
@@ -107,12 +115,15 @@ export function idealDmcPositions(
       b: aLab.b + t * (bLab.b - aLab.b),
     };
     let bestDistSq = Infinity, bestHex: string | null = null;
+    let prefDistSq = Infinity, prefHex: string | null = null;
     for (const { color, lab } of entries) {
       if (used.has(color.hex)) continue;
       const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
       if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = color.hex; }
+      if (preferred.has(color.hex) && dSq < prefDistSq) { prefDistSq = dSq; prefHex = color.hex; }
     }
-    if (bestHex) { used.add(bestHex); result.push(bestHex); }
+    const chosen = (prefHex && prefDistSq <= bestDistSq * PREFERRED_TOLERANCE_SQ) ? prefHex : bestHex;
+    if (chosen) { used.add(chosen); result.push(chosen); }
   }
   return result;
 }
@@ -120,19 +131,24 @@ export function idealDmcPositions(
 /**
  * Find the nearest unused DMC thread to an arbitrary OKLab position.
  * Used when filling the largest perceptual gap in a sequence.
+ *
+ * Pass `preferred` to bias toward reusing existing threads.
  */
 export function nearestUnusedDmc(
   ideal: { L: number; a: number; b: number },
   exclude: Set<string>,
+  preferred: Set<string> = new Set(),
 ): DmcColor | null {
   const entries = dmcEntries();
   let best: DmcColor | null = null, bestDistSq = Infinity;
+  let prefBest: DmcColor | null = null, prefDistSq = Infinity;
   for (const { color, lab } of entries) {
     if (exclude.has(color.hex)) continue;
     const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
     if (dSq < bestDistSq) { bestDistSq = dSq; best = color; }
+    if (preferred.has(color.hex) && dSq < prefDistSq) { prefDistSq = dSq; prefBest = color; }
   }
-  return best;
+  return (prefBest && prefDistSq <= bestDistSq * PREFERRED_TOLERANCE_SQ) ? prefBest : best;
 }
 
 /**

@@ -161,9 +161,10 @@ export default function Gradients() {
     const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
     let seeded: string[];
     if (isDmcMode && anchorAHex && anchorBHex) {
-      // DMC mode: generate 1 ideal OKLab intermediate and match to nearest DMC thread.
+      // DMC mode: generate 1 ideal OKLab intermediate, preferring existing threads.
+      const preferred = new Set(dmcSet.map((d) => d.hex));
       const intermediates = idealDmcPositions(anchorAHex, anchorBHex, 1,
-        [anchorAHex, anchorBHex]);
+        [anchorAHex, anchorBHex], preferred);
       seeded = [anchorAHex, ...intermediates, anchorBHex];
     } else if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
       const between = gradientBetween(colorSpace, anchorAHex, anchorBHex, sortMode, perpOpts);
@@ -205,7 +206,9 @@ export default function Gradients() {
         if (toAdd <= 0) return prev;
 
         if (isDmcMode && prev.length >= 2) {
-          // DMC mode: fill the largest perceptual gap with the nearest unused DMC thread.
+          // DMC mode: fill the largest perceptual gap with the nearest unused DMC thread,
+          // preferring already-matched threads before pulling from the full library.
+          const prefSet = new Set(dmcSet.map((d) => d.hex));
           let result = [...prev];
           const used = new Set(result);
           for (let step = 0; step < toAdd; step++) {
@@ -218,7 +221,7 @@ export default function Gradients() {
             }
             const a = labs[gapIdx], b = labs[gapIdx + 1];
             const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-            const match = nearestUnusedDmc(ideal, used);
+            const match = nearestUnusedDmc(ideal, used, prefSet);
             if (!match) break;
             used.add(match.hex);
             result.splice(gapIdx + 1, 0, match.hex);
