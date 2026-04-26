@@ -41,6 +41,11 @@ import {
 import { findDmcBridges } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
+function oklabDist(a: string, b: string): number {
+  const la = hexToOklab(a), lb = hexToOklab(b);
+  return Math.sqrt((la.L - lb.L) ** 2 + (la.a - lb.a) ** 2 + (la.b - lb.b) ** 2);
+}
+
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
@@ -64,6 +69,8 @@ export default function Gradients() {
   );
 
   const [sequence, setSequence] = useState<string[]>([]);
+  const [pinnedHexes, setPinnedHexes] = useState<string[]>([]);
+  const [selectedSeqHex, setSelectedSeqHex] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [maxColors, setMaxColors] = useState<number>(0); // 0 = not yet set
 
@@ -88,9 +95,16 @@ export default function Gradients() {
     const sorted = buildSorted(colorSpace);
     const limit = maxColors > 0 ? maxColors : colorSpace.length;
     setSequence(limit < sorted.length ? pickEvenly(sorted, limit) : sorted);
+    setPinnedHexes([]);
+    setSelectedSeqHex(null);
     if (maxColors === 0) setMaxColors(colorSpace.length);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorSpace, state.anchorA, state.anchorB]);
+
+  // Close alternatives panel if its color was removed from sequence.
+  useEffect(() => {
+    if (selectedSeqHex && !sequence.includes(selectedSeqHex)) setSelectedSeqHex(null);
+  }, [sequence, selectedSeqHex]);
 
   // When the user manually adds a color past the current limit, bump the limit.
   useEffect(() => {
@@ -115,8 +129,12 @@ export default function Gradients() {
         }
         return result;
       } else {
-        // Trim to n evenly-spaced items from the current ordering.
-        return pickEvenly(prev, n);
+        // Keep all pinned colors; fill remaining slots with evenly-spaced non-pinned.
+        const pinned = prev.filter((h) => pinnedHexes.includes(h));
+        const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
+        const needed = Math.max(0, n - pinned.length);
+        const selected = needed > 0 ? pickEvenly(nonPinned, needed) : [];
+        return prev.filter((h) => pinned.includes(h) || selected.includes(h));
       }
     });
   }
@@ -125,9 +143,15 @@ export default function Gradients() {
     const known = dmcPool.map((d) => d.hex);
     const bridges = findDmcBridges(sequence, known);
     if (bridges.length > 0) {
+      const newHexes = bridges.map((d) => d.hex);
       setDmcBridges((prev) => {
         const existingIds = new Set(dmcPool.map((d) => d.id));
         return [...prev, ...bridges.filter((d) => !existingIds.has(d.id))];
+      });
+      setPinnedHexes((prev) => {
+        const next = [...prev];
+        for (const h of newHexes) if (!next.includes(h)) next.push(h);
+        return next;
       });
     }
   }
@@ -139,6 +163,7 @@ export default function Gradients() {
 
   function handleDragStart({ active }: DragStartEvent) {
     setActiveId(String(active.id));
+    setSelectedSeqHex(null);
   }
 
   function handleDragEnd({ active, over }: DragEndEvent) {
@@ -156,6 +181,7 @@ export default function Gradients() {
         next.splice(insertAt, 0, hex);
         return next;
       });
+      setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else {
       setSequence((prev) => {
         const oldIdx = prev.indexOf(activeIdStr);
@@ -172,10 +198,39 @@ export default function Gradients() {
     return new Map(results.map((r) => [r.hex, r.isOutlier]));
   }, [sequence]);
 
+  // Nearest alternatives from colorSpace for the selected sequence slot.
+  const alternatives = useMemo(() => {
+    if (!selectedSeqHex) return [];
+    return colorSpace
+      .filter((h) => !sequence.includes(h))
+      .sort((a, b) => oklabDist(a, selectedSeqHex) - oklabDist(b, selectedSeqHex))
+      .slice(0, 12);
+  }, [selectedSeqHex, colorSpace, sequence]);
+
+  function handleSwapAlternative(candidate: string) {
+    if (!selectedSeqHex) return;
+    const oldHex = selectedSeqHex;
+    setSequence((prev) => {
+      const idx = prev.indexOf(oldHex);
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = candidate;
+      return next;
+    });
+    // Remove old pin, add pin for the explicitly chosen replacement.
+    setPinnedHexes((prev) => {
+      const next = prev.filter((h) => h !== oldHex);
+      return next.includes(candidate) ? next : [...next, candidate];
+    });
+    setSelectedSeqHex(candidate);
+  }
+
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
     ? activeId.startsWith("shelf:") ? activeId.slice(6) : activeId
     : null;
+
+  const pinnedFloor = Math.max(1, pinnedHexes.length);
 
   async function handleSave() {
     if (sequence.length < 2) return;
@@ -234,7 +289,7 @@ export default function Gradients() {
               </span>
               <input
                 type="range"
-                min={1}
+                min={pinnedFloor}
                 max={colorSpace.length}
                 value={maxColors > 0 ? maxColors : colorSpace.length}
                 onChange={(e) => applyMaxColors(Number(e.target.value))}
@@ -250,11 +305,11 @@ export default function Gradients() {
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <p style={{ margin: 0, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
-                  Gradient ({sequence.length}) — drag to reorder
+                  Gradient ({sequence.length}) — drag to reorder, tap to swap
                 </p>
                 <button
                   type="button"
-                  onClick={() => setSequence([])}
+                  onClick={() => { setSequence([]); setPinnedHexes([]); setSelectedSeqHex(null); }}
                   style={{ background: "none", border: "none", color: "var(--ion-color-medium)", fontSize: 12, cursor: "pointer", padding: "2px 4px", textDecoration: "underline" }}
                 >
                   Clear
@@ -272,17 +327,98 @@ export default function Gradients() {
                         index={i}
                         total={sequence.length}
                         isOutlier={outlierMap.get(hex) ?? false}
+                        isPinned={pinnedHexes.includes(hex)}
+                        isSelected={selectedSeqHex === hex}
                         label={dmcEntry ? dmcEntry.id : `L${metas[i].L.toFixed(2)}`}
                         title={
                           outlierMap.get(hex)
                             ? "Perceptual outlier — may not blend smoothly"
                             : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
                         }
+                        onSelect={() => setSelectedSeqHex((prev) => prev === hex ? null : hex)}
                       />
                     );
                   })}
                 </div>
               </SortableContext>
+
+              {/* ── Alternatives / pin panel ──────────────────────────── */}
+              {selectedSeqHex && (
+                <div style={{
+                  background: "var(--ion-color-light)",
+                  borderRadius: 10,
+                  padding: "10px 12px",
+                  marginBottom: 10,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+                      {selectedSeqHex}
+                    </span>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => setPinnedHexes((prev) =>
+                          prev.includes(selectedSeqHex)
+                            ? prev.filter((h) => h !== selectedSeqHex)
+                            : [...prev, selectedSeqHex]
+                        )}
+                        style={{
+                          background: pinnedHexes.includes(selectedSeqHex) ? "var(--ion-color-primary)" : "transparent",
+                          color: pinnedHexes.includes(selectedSeqHex) ? "white" : "var(--ion-color-medium)",
+                          border: "1px solid currentColor",
+                          borderRadius: 6,
+                          fontSize: 11,
+                          padding: "2px 8px",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {pinnedHexes.includes(selectedSeqHex) ? "Pinned" : "Pin"}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Close panel"
+                        onClick={() => setSelectedSeqHex(null)}
+                        style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--ion-color-medium)", lineHeight: 1, padding: "0 2px" }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                  {alternatives.length === 0 ? (
+                    <span style={{ fontSize: 12, color: "var(--ion-color-medium)" }}>No alternatives on shelf.</span>
+                  ) : (
+                    <>
+                      <p style={{ margin: "0 0 6px", fontSize: 11, color: "var(--ion-color-medium)" }}>
+                        Tap to swap in nearest {isDmcMode ? "DMC thread" : "palette color"}:
+                      </p>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {alternatives.map((hex) => {
+                          const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
+                          return (
+                            <button
+                              key={hex}
+                              type="button"
+                              aria-label={`Swap in ${hex}`}
+                              title={dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex}
+                              onClick={() => handleSwapAlternative(hex)}
+                              style={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: 6,
+                                background: hex,
+                                border: "2px solid rgba(0,0,0,0.12)",
+                                cursor: "pointer",
+                                flexShrink: 0,
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {[...outlierMap.values()].some(Boolean) && (
                 <p style={{ fontSize: 12, color: "#f59e0b", margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
@@ -307,7 +443,10 @@ export default function Gradients() {
                       key={hex}
                       hex={hex}
                       title={dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex}
-                      onTap={() => setSequence((prev) => prev.includes(hex) ? prev : [...prev, hex])}
+                      onTap={() => {
+                        setSequence((prev) => prev.includes(hex) ? prev : [...prev, hex]);
+                        setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
+                      }}
                     />
                   );
                 })}
@@ -357,23 +496,35 @@ function SeqItem({
   index,
   total,
   isOutlier,
+  isPinned,
+  isSelected,
   label,
   title,
+  onSelect,
 }: {
   hex: string;
   index: number;
   total: number;
   isOutlier: boolean;
+  isPinned: boolean;
+  isSelected: boolean;
   label: string;
   title: string;
+  onSelect: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: hex });
+
+  let boxShadow = "";
+  if (isPinned) boxShadow = "inset 0 4px 0 rgba(255,255,255,0.55)";
+  if (isSelected) boxShadow = (isPinned ? "inset 0 4px 0 rgba(255,255,255,0.55), " : "") + "0 0 0 2px white";
+
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
       title={title}
+      onClick={onSelect}
       style={{
         position: "relative",
         flex: 1,
@@ -383,11 +534,12 @@ function SeqItem({
           total === 1 ? 10 :
           index === 0 ? "10px 0 0 10px" :
           index === total - 1 ? "0 10px 10px 0" : 0,
-        cursor: "grab",
+        cursor: "pointer",
         touchAction: "none",
         opacity: isDragging ? 0.35 : 1,
-        outline: isOutlier ? "3px solid #f59e0b" : "none",
+        outline: isOutlier && !isSelected ? "3px solid #f59e0b" : "none",
         outlineOffset: -3,
+        boxShadow: boxShadow || undefined,
         transform: CSS.Transform.toString(transform),
         transition,
       }}
