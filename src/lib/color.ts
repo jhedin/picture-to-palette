@@ -75,7 +75,7 @@ const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
 // absolute cap (0.15 OKLab units) prevents very long segments (e.g. white→black)
 // from pulling in saturated hues that have no business in a grey-scale ramp.
 export const NATURAL_PERP_THRESHOLD = 0.30;
-const NATURAL_PERP_ABS_CAP = 0.15;
+export const NATURAL_PERP_ABS_CAP = 0.15;
 
 /**
  * Given two anchor colours and a mode, return every palette colour that
@@ -97,6 +97,7 @@ export function gradientBetween(
   anchorA: string,
   anchorB: string,
   mode: GradientMode = "natural",
+  perpOpts?: { threshold?: number; absCap?: number },
 ): string[] {
   const a = hexToOklab(anchorA);
   const b = hexToOklab(anchorB);
@@ -113,7 +114,9 @@ export function gradientBetween(
     const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
     if (abLenSq === 0) return [];
     const abLen = Math.sqrt(abLenSq);
-    const maxPerp = Math.min(NATURAL_PERP_THRESHOLD * abLen, NATURAL_PERP_ABS_CAP);
+    const relThreshold = perpOpts?.threshold ?? NATURAL_PERP_THRESHOLD;
+    const absCapVal = perpOpts?.absCap ?? NATURAL_PERP_ABS_CAP;
+    const maxPerp = Math.min(relThreshold * abLen, absCapVal);
     const maxPerpSq = maxPerp * maxPerp;
     return base
       .map(({ hex, lab }) => {
