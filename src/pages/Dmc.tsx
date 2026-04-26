@@ -245,7 +245,7 @@ export default function Dmc() {
         )}
         <IonButton
           expand="block"
-          onClick={() => history.push("/gradients")}
+          onClick={() => history.push("/gradients?mode=dmc")}
         >
           Go to Gradients →
         </IonButton>

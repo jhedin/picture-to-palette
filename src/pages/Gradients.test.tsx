@@ -10,7 +10,6 @@ vi.mock("../lib/gradient-canvas", () => ({
   renderGradientPng: vi.fn(async () => "data:image/png;base64,FAKE"),
 }));
 
-// Seeds the palette store via effects so state settles before Gradients' effects run.
 function Seeder({
   hexes,
   anchors,
@@ -33,9 +32,9 @@ function Seeder({
   return null;
 }
 
-function renderGradients(hexes: string[], anchors?: [number, number]) {
+function renderGradients(hexes: string[], anchors?: [number, number], url = "/gradients") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[url]}>
       <PaletteProvider>
         <Seeder hexes={hexes} anchors={anchors} />
         <Gradients />
@@ -65,6 +64,14 @@ describe("Gradients page", () => {
     });
   });
 
+  it("seeds using anchors when both are set", async () => {
+    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
+    });
+  });
+
   it("shelf is empty when all colors are in the sequence", async () => {
     renderGradients(["#FF0000", "#0000FF"]);
     await waitFor(() =>
@@ -88,14 +95,6 @@ describe("Gradients page", () => {
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
     expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
-  });
-
-  it("pre-populates sequence from anchorA and anchorB", async () => {
-    renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
-    });
   });
 
   it("clear button empties the sequence", async () => {
@@ -123,5 +122,14 @@ describe("Gradients page", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /save png/i }));
     await waitFor(() => expect(mod.renderGradientPng).toHaveBeenCalled());
+  });
+
+  it("does not enter DMC mode without ?mode=dmc", async () => {
+    renderGradients(["#FF0000", "#0000FF"]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument(),
+    );
+    // DMC-mode label not shown
+    expect(screen.queryByText(/available dmc threads/i)).not.toBeInTheDocument();
   });
 });
