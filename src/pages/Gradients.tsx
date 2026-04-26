@@ -39,26 +39,30 @@ import {
   swatchMeta,
   scoreGradientOutliers,
   gradientBetween,
+  oklabDistHex,
+  nearestNeighborSort,
+  shadeRamp,
+  NATURAL_PERP_THRESHOLD,
+  NATURAL_PERP_ABS_CAP,
   type GradientMode,
 } from "../lib/color";
 
 const MODES: GradientMode[] = ["natural", "lightness", "saturation", "hue"];
+const DMC_MODES: GradientMode[] = [...MODES, "shade"];
 const MODE_DESC: Record<GradientMode, string> = {
   natural:    "Colors that perceptually sit on the line between your endpoints in OKLab space.",
   lightness:  "Colors sorted by brightness — dark to light or light to dark depending on your endpoints.",
   saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
   hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
+  shade:      "Hue-shifted shading ramp — shadows drift cool, highlights drift warm, from the median-lightness midtone.",
 };
-import { findDmcBridges, expandDmcPalette } from "../lib/dmc-match";
+import { idealDmcPositions, nearestUnusedDmc } from "../lib/dmc-match";
+import { DMC_COLORS } from "../lib/dmc-colors";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
-function oklabDist(a: string, b: string): number {
-  const la = hexToOklab(a), lb = hexToOklab(b);
-  return Math.sqrt((la.L - lb.L) ** 2 + (la.a - lb.a) ** 2 + (la.b - lb.b) ** 2);
-}
 
 export default function Gradients() {
-  const { state } = usePalette();
+  const { state, dispatch } = usePalette();
   const history = useHistory();
   const location = useLocation();
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -67,18 +71,34 @@ export default function Gradients() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const isDmcMode = searchParams.get("mode") === "dmc" && dmcSet.length > 0;
 
-  // Extra DMC colors discovered via "Fill gaps" or "Expand shades" — local to this page.
-  const [dmcBridges, setDmcBridges] = useState<DmcColor[]>([]);
-  const [dmcShades, setDmcShades] = useState<DmcColor[]>([]);
-  const dmcPool = useMemo(
-    () => isDmcMode ? [...dmcSet, ...dmcBridges, ...dmcShades] : [],
-    [isDmcMode, dmcSet, dmcBridges, dmcShades],
-  );
+  // In DMC mode, colorSpace = matched threads + full DMC library filtered to the
+  // perp cylinder between the current anchors (wider threshold so the shelf is
+  // generous; gradientBetween/idealDmcPositions do tighter filtering when building
+  // the actual sequence).
+  const colorSpace: string[] = useMemo(() => {
+    if (!isDmcMode) return state.colors.map((c) => c.hex);
+    const base = new Set(dmcSet.map((d) => d.hex));
+    const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
+    const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
+    if (anchorAHex && anchorBHex) {
+      const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+      const between = gradientBetween(allDmcHexes, anchorAHex, anchorBHex, "natural",
+        { threshold: 0.40, absCap: 0.20 });
+      for (const h of between) base.add(h);
+    }
+    return [...base];
+  }, [isDmcMode, dmcSet, state.anchorA, state.anchorB, state.colors]);
 
-  const colorSpace: string[] = useMemo(
-    () => isDmcMode ? dmcPool.map((d) => d.hex) : state.colors.map((c) => c.hex),
-    [isDmcMode, dmcPool, state.colors],
-  );
+  const dmcPool = useMemo(() => {
+    if (!isDmcMode) return [];
+    const result: DmcColor[] = [];
+    const seen = new Set<string>();
+    for (const hex of colorSpace) {
+      const entry = DMC_COLORS.find((d) => d.hex === hex);
+      if (entry && !seen.has(entry.id)) { result.push(entry); seen.add(entry.id); }
+    }
+    return result;
+  }, [isDmcMode, colorSpace]);
 
   const [sortMode, setSortMode] = useState<GradientMode>("natural");
   const [sequence, setSequence] = useState<string[]>([]);
@@ -86,6 +106,12 @@ export default function Gradients() {
   const [selectedSeqHex, setSelectedSeqHex] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [maxColors, setMaxColors] = useState<number>(0); // 0 = not yet set
+
+  const [perpRel, setPerpRel] = useState(NATURAL_PERP_THRESHOLD);
+  const [perpCap, setPerpCap] = useState(NATURAL_PERP_ABS_CAP);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+
+  const perpOpts = useMemo(() => ({ threshold: perpRel, absCap: perpCap }), [perpRel, perpCap]);
 
   // Keep a ref so the seeding effect can check pins without adding them to its dep array.
   const pinnedRef = useRef<string[]>([]);
@@ -97,17 +123,26 @@ export default function Gradients() {
     const b = state.colors.find((c) => c.id === state.anchorB)?.hex;
     if (m === "natural") {
       if (a && b) return sortGradient(cs, a, b);
-      const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
-      return byL.length >= 2 ? sortGradient(cs, byL[0], byL[byL.length - 1]) : cs;
+      // Without anchors use nearest-neighbour so similar colours stay adjacent
+      // (projection-onto-L-axis would interleave unrelated hues at the same lightness).
+      return nearestNeighborSort(cs);
     }
     if (m === "lightness") return [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
     if (m === "saturation") {
       const chroma = (h: string) => { const lab = hexToOklab(h); return Math.sqrt(lab.a * lab.a + lab.b * lab.b); };
       return [...cs].sort((x, y) => chroma(x) - chroma(y));
     }
-    // hue
-    const hueOf = (h: string) => { const lab = hexToOklab(h); return Math.atan2(lab.b, lab.a); };
-    return [...cs].sort((x, y) => hueOf(x) - hueOf(y));
+    if (m === "hue") {
+      const hueOf = (h: string) => { const lab = hexToOklab(h); return Math.atan2(lab.b, lab.a); };
+      return [...cs].sort((x, y) => hueOf(x) - hueOf(y));
+    }
+    // shade — hue-shifted shadow→highlight ramp from the median-lightness midtone
+    const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
+    const midtone = byL[Math.floor(byL.length / 2)];
+    const { shadows, highlights } = shadeRamp(cs, midtone, cs.length);
+    const ordered = [...shadows, midtone, ...highlights];
+    const inRamp = new Set(ordered);
+    return [...ordered, ...cs.filter((h) => !inRamp.has(h))];
   }
 
   function buildSorted(cs: string[]): string[] { return sortWithMode(cs, sortMode); }
@@ -125,9 +160,14 @@ export default function Gradients() {
     const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
     const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
     let seeded: string[];
-    if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
-      // Anchors set: start with A, the colors that lie between them, and B.
-      const between = gradientBetween(colorSpace, anchorAHex, anchorBHex, sortMode);
+    if (isDmcMode && anchorAHex && anchorBHex) {
+      // DMC mode: generate 1 ideal OKLab intermediate, preferring existing threads.
+      const preferred = new Set(dmcSet.map((d) => d.hex));
+      const intermediates = idealDmcPositions(anchorAHex, anchorBHex, 1,
+        [anchorAHex, anchorBHex], preferred);
+      seeded = [anchorAHex, ...intermediates, anchorBHex];
+    } else if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
+      const between = gradientBetween(colorSpace, anchorAHex, anchorBHex, sortMode, perpOpts);
       seeded = [anchorAHex, ...between, anchorBHex];
     } else {
       const sorted = buildSorted(colorSpace);
@@ -163,16 +203,40 @@ export default function Gradients() {
     setSequence((prev) => {
       if (effective >= prev.length) {
         const toAdd = effective - prev.length;
+        if (toAdd <= 0) return prev;
+
+        if (isDmcMode && prev.length >= 2) {
+          // DMC mode: fill the largest perceptual gap with the nearest unused DMC thread,
+          // preferring already-matched threads before pulling from the full library.
+          const prefSet = new Set(dmcSet.map((d) => d.hex));
+          let result = [...prev];
+          const used = new Set(result);
+          for (let step = 0; step < toAdd; step++) {
+            const labs = result.map(hexToOklab);
+            let maxDistSq = 0, gapIdx = 0;
+            for (let i = 0; i < result.length - 1; i++) {
+              const a = labs[i], b = labs[i + 1];
+              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
+              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+            }
+            const a = labs[gapIdx], b = labs[gapIdx + 1];
+            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            const match = nearestUnusedDmc(ideal, used, prefSet);
+            if (!match) break;
+            used.add(match.hex);
+            result.splice(gapIdx + 1, 0, match.hex);
+          }
+          return result;
+        }
+
         const shelf = colorSpace.filter((h) => !prev.includes(h));
-        if (shelf.length === 0 || toAdd <= 0) return prev;
+        if (shelf.length === 0) return prev;
         const allSorted = buildSorted(colorSpace);
-        // When there are endpoints, only add colors that perceptually lie between them.
-        // gradientBetween filters by perpendicular distance so off-axis colors (taupe between blues) are excluded.
         let candidatePool: string[];
         if (prev.length >= 2) {
           const firstHex = prev[0];
           const lastHex = prev[prev.length - 1];
-          const between = gradientBetween(colorSpace, firstHex, lastHex, sortMode)
+          const between = gradientBetween(colorSpace, firstHex, lastHex, sortMode, perpOpts)
             .filter((h) => shelf.includes(h));
           candidatePool = between.length > 0 ? between : allSorted.filter((h) => shelf.includes(h));
         } else {
@@ -202,20 +266,10 @@ export default function Gradients() {
     });
   }
 
-  function handleFillGaps() {
-    const known = dmcPool.map((d) => d.hex);
-    const bridges = findDmcBridges(sequence, known);
-    if (bridges.length > 0) {
-      const newHexes = bridges.map((d) => d.hex);
-      setDmcBridges((prev) => {
-        const existingIds = new Set(dmcPool.map((d) => d.id));
-        return [...prev, ...bridges.filter((d) => !existingIds.has(d.id))];
-      });
-      setPinnedHexes((prev) => {
-        const next = [...prev];
-        for (const h of newHexes) if (!next.includes(h)) next.push(h);
-        return next;
-      });
+  function handleAddToShelf() {
+    for (const hex of sequence) {
+      const dmc = dmcPool.find((d) => d.hex === hex);
+      if (dmc) dispatch({ type: "ADD_DMC", color: dmc });
     }
   }
 
@@ -253,7 +307,6 @@ export default function Gradients() {
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else if (overIdStr === "shelf-drop-zone") {
-      // Dragged a sequence item back to the shelf — remove and unpin it.
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
     } else {
@@ -272,6 +325,31 @@ export default function Gradients() {
     return new Map(results.map((r) => [r.hex, r.isOutlier]));
   }, [sequence]);
 
+  // OKLab scatter analysis: compute (t, perp) for every palette color relative to anchors A→B.
+  const oklabAnalysis = useMemo(() => {
+    const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
+    const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
+    if (!anchorAHex || !anchorBHex) return null;
+    const a = hexToOklab(anchorAHex);
+    const b = hexToOklab(anchorBHex);
+    const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
+    const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
+    if (abLenSq === 0) return null;
+    const abLen = Math.sqrt(abLenSq);
+    const maxPerp = Math.min(perpOpts.threshold * abLen, perpOpts.absCap);
+    const points = colorSpace.map((hex) => {
+      const lab = hexToOklab(hex);
+      const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
+      const apLenSq = ap.L * ap.L + ap.a * ap.a + ap.b * ap.b;
+      const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+      const perpSq = Math.max(0, apLenSq - t * t * abLenSq);
+      const perp = Math.sqrt(perpSq);
+      const included = t > 0 && t < 1 && perp < maxPerp;
+      return { hex, t, perp, included };
+    });
+    return { points, abLen, maxPerp, anchorAHex, anchorBHex };
+  }, [state.anchorA, state.anchorB, state.colors, colorSpace, perpOpts]);
+
   function handleModeChange(m: GradientMode) {
     setSortMode(m);
     setSequence((prev) => prev.length < 2 ? prev : sortWithMode(prev, m));
@@ -285,14 +363,14 @@ export default function Gradients() {
     const leftHex = idx > 0 ? sequence[idx - 1] : null;
     const rightHex = idx < sequence.length - 1 ? sequence[idx + 1] : null;
     if (leftHex && rightHex) {
-      const between = gradientBetween(colorSpace, leftHex, rightHex, sortMode)
+      const between = gradientBetween(colorSpace, leftHex, rightHex, sortMode, perpOpts)
         .filter((h) => !sequence.includes(h));
       if (between.length > 0) return between.slice(0, 12);
     }
     // Endpoint or no between-candidates: nearest by OKLab distance.
     return colorSpace
       .filter((h) => !sequence.includes(h))
-      .sort((a, b) => oklabDist(a, selectedSeqHex) - oklabDist(b, selectedSeqHex))
+      .sort((a, b) => oklabDistHex(a, selectedSeqHex) - oklabDistHex(b, selectedSeqHex))
       .slice(0, 12);
   }, [selectedSeqHex, sequence, colorSpace, sortMode]);
 
@@ -375,7 +453,7 @@ export default function Gradients() {
         >
           {/* ── Mode selector ─────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-            {MODES.map((m) => (
+            {(isDmcMode ? DMC_MODES : MODES).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -416,6 +494,96 @@ export default function Gradients() {
                 onChange={(e) => applyMaxColors(Number(e.target.value))}
                 style={{ flex: 1 }}
               />
+            </div>
+          )}
+
+          {/* ── Analyze OKLab toggle ──────────────────────────────────── */}
+          <div style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              onClick={() => setShowAnalysis((v) => !v)}
+              style={{
+                padding: "4px 12px",
+                borderRadius: 20,
+                border: "1px solid var(--ion-color-medium)",
+                background: showAnalysis ? "var(--ion-color-medium)" : "transparent",
+                color: showAnalysis ? "white" : "var(--ion-color-medium)",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {showAnalysis ? "Hide OKLab Analysis" : "Analyze OKLab"}
+            </button>
+          </div>
+
+          {/* ── OKLab Analysis panel ──────────────────────────────────── */}
+          {showAnalysis && (
+            <div style={{
+              background: "var(--ion-color-light)",
+              borderRadius: 10,
+              padding: "12px",
+              marginBottom: 12,
+            }}>
+              {/* Threshold sliders */}
+              <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+                OKLab Filter Thresholds
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--ion-color-medium)", minWidth: 140, whiteSpace: "nowrap" }}>
+                  Relative threshold: <strong>{perpRel.toFixed(2)}</strong>
+                </span>
+                <input
+                  type="range"
+                  min={0.10}
+                  max={0.50}
+                  step={0.01}
+                  value={perpRel}
+                  onChange={(e) => setPerpRel(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, color: "var(--ion-color-medium)", minWidth: 140, whiteSpace: "nowrap" }}>
+                  Absolute cap: <strong>{perpCap.toFixed(2)}</strong>
+                </span>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={0.30}
+                  step={0.01}
+                  value={perpCap}
+                  onChange={(e) => setPerpCap(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => { setSequence([]); setMaxColors(0); }}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 6,
+                  border: "1px solid var(--ion-color-primary)",
+                  background: "transparent",
+                  color: "var(--ion-color-primary)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  marginBottom: 12,
+                }}
+              >
+                Reseed
+              </button>
+
+              {/* Scatter plot */}
+              {!oklabAnalysis ? (
+                <p style={{ margin: 0, fontSize: 12, color: "var(--ion-color-medium)" }}>
+                  Set anchors A and B on the Palette screen to see analysis.
+                </p>
+              ) : (
+                <OklabScatter
+                  points={oklabAnalysis.points}
+                  maxPerp={oklabAnalysis.maxPerp}
+                />
+              )}
             </div>
           )}
 
@@ -596,8 +764,8 @@ export default function Gradients() {
 
           {/* ── DMC actions ───────────────────────────────────────────── */}
           {isDmcMode && sequence.length >= 2 && (
-            <IonButton fill="outline" expand="block" onClick={handleFillGaps} style={{ marginBottom: 8 }}>
-              Fill gaps with DMC colors
+            <IonButton fill="outline" expand="block" onClick={handleAddToShelf} style={{ marginBottom: 8 }}>
+              Add to shelf
             </IonButton>
           )}
           {isDmcMode && (
@@ -735,6 +903,146 @@ function SeqItem({
       }}>
         {label}
       </div>
+    </div>
+  );
+}
+
+// ── OKLab Scatter Plot ────────────────────────────────────────────────────
+// Maps (t, perp) coordinates for all palette colors onto an SVG with:
+//   X axis: t (projection parameter, 0=anchorA, 1=anchorB), range -0.1..1.1
+//   Y axis: perp (OKLab perpendicular distance), range 0..0.4
+// Colors below the threshold line AND with t ∈ (0,1) = full opacity (included).
+// Colors above or outside t range = 40% opacity (excluded).
+function OklabScatter({
+  points,
+  maxPerp,
+}: {
+  points: { hex: string; t: number; perp: number; included: boolean }[];
+  maxPerp: number;
+}) {
+  // SVG coordinate system: viewBox="0 0 320 160"
+  // t ∈ [-0.1, 1.1] → x ∈ [20, 300]
+  // perp ∈ [0, 0.4] → y ∈ [150, 10] (inverted: high perp = low on screen)
+  const tToX = (t: number) => 20 + ((t - (-0.1)) / 1.2) * 280;
+  const perpToY = (perp: number) => 150 - (perp / 0.4) * 140;
+  const thresholdY = perpToY(Math.min(maxPerp, 0.4));
+
+  const PERP_AXIS_MAX = 0.4;
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg
+        viewBox="0 0 320 160"
+        style={{ width: "100%", maxWidth: 320, display: "block", fontFamily: "monospace" }}
+        aria-label="OKLab scatter plot of palette colors"
+      >
+        {/* Axis lines */}
+        <line x1={20} y1={150} x2={300} y2={150} stroke="var(--ion-color-medium)" strokeWidth={1} />
+        <line x1={20} y1={10} x2={20} y2={150} stroke="var(--ion-color-medium)" strokeWidth={1} />
+
+        {/* X axis tick marks and labels */}
+        {[0, 0.25, 0.5, 0.75, 1].map((v) => {
+          const x = tToX(v);
+          return (
+            <g key={v}>
+              <line x1={x} y1={148} x2={x} y2={152} stroke="var(--ion-color-medium)" strokeWidth={1} />
+              <text x={x} y={159} fontSize={7} textAnchor="middle" fill="var(--ion-color-medium)">{v}</text>
+            </g>
+          );
+        })}
+
+        {/* Y axis tick marks and labels */}
+        {[0, 0.1, 0.2, 0.3, 0.4].map((v) => {
+          const y = perpToY(v);
+          return (
+            <g key={v}>
+              <line x1={18} y1={y} x2={22} y2={y} stroke="var(--ion-color-medium)" strokeWidth={1} />
+              <text x={17} y={y + 3} fontSize={7} textAnchor="end" fill="var(--ion-color-medium)">{v.toFixed(1)}</text>
+            </g>
+          );
+        })}
+
+        {/* Axis labels */}
+        <text x={160} y={159} fontSize={7} textAnchor="middle" fill="var(--ion-color-medium)" dy={0}>t →</text>
+        <text x={7} y={82} fontSize={7} textAnchor="middle" fill="var(--ion-color-medium)" transform="rotate(-90, 7, 82)">perp</text>
+
+        {/* Threshold line */}
+        {maxPerp <= PERP_AXIS_MAX && (
+          <line
+            x1={tToX(0)}
+            y1={thresholdY}
+            x2={tToX(1)}
+            y2={thresholdY}
+            stroke="rgba(239,68,68,0.7)"
+            strokeWidth={1.5}
+            strokeDasharray="4 2"
+          />
+        )}
+        {maxPerp <= PERP_AXIS_MAX && (
+          <text
+            x={tToX(1) + 2}
+            y={thresholdY + 3}
+            fontSize={6}
+            fill="rgba(239,68,68,0.8)"
+          >
+            cap
+          </text>
+        )}
+
+        {/* Anchor squares at (0,0) and (1,0) */}
+        {([0, 1] as const).map((tVal) => {
+          const x = tToX(tVal);
+          const y = perpToY(0);
+          return (
+            <rect
+              key={tVal}
+              x={x - 5}
+              y={y - 5}
+              width={10}
+              height={10}
+              fill="white"
+              stroke="rgba(0,0,0,0.6)"
+              strokeWidth={1.5}
+            />
+          );
+        })}
+
+        {/* Palette color dots */}
+        {points.map(({ hex, t, perp, included }) => {
+          const clampedT = Math.max(-0.1, Math.min(1.1, t));
+          const clampedPerp = Math.max(0, Math.min(PERP_AXIS_MAX, perp));
+          const x = tToX(clampedT);
+          const y = perpToY(clampedPerp);
+          const opacity = included ? 1 : 0.4;
+          const isAtEdge = t < -0.05 || t > 1.05;
+          return (
+            <g key={hex} opacity={opacity}>
+              <circle
+                cx={x}
+                cy={y}
+                r={5}
+                fill={hex}
+                stroke="rgba(0,0,0,0.5)"
+                strokeWidth={1}
+              />
+              {isAtEdge && (
+                <text
+                  x={x}
+                  y={y - 7}
+                  fontSize={5}
+                  textAnchor="middle"
+                  fill="rgba(0,0,0,0.5)"
+                >
+                  {t < 0 ? "←" : "→"}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <p style={{ margin: "4px 0 0", fontSize: 10, color: "var(--ion-color-medium)" }}>
+        X = t (0=A, 1=B) · Y = perp distance · dashed line = current threshold · dim = excluded
+      </p>
     </div>
   );
 }

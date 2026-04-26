@@ -10,7 +10,7 @@ import { useEffect } from "react";
 // Mocks — must use vi.hoisted so factories can reference these before hoisting
 // ---------------------------------------------------------------------------
 
-const { MOCK_DMC_COLORS, mockMatchToDmc, mockExpandDmcPalette } = vi.hoisted(() => {
+const { MOCK_DMC_COLORS, mockMatchToDmc } = vi.hoisted(() => {
   const MOCK_DMC_COLORS = [
     { id: "321", name: "Red", hex: "#C72B3B" },
     { id: "666", name: "Bright Red", hex: "#E31D42" },
@@ -26,13 +26,7 @@ const { MOCK_DMC_COLORS, mockMatchToDmc, mockExpandDmcPalette } = vi.hoisted(() 
     { id: "321", name: "Red", hex: "#C72B3B" },
     { id: "666", name: "Bright Red", hex: "#E31D42" },
   ]);
-  const mockExpandDmcPalette = vi.fn(
-    (base: { id: string; name: string; hex: string }[]) => [
-      ...base,
-      { id: "3713", name: "Salmon Very Light", hex: "#FFE2E2" },
-    ],
-  );
-  return { MOCK_DMC_COLORS, mockMatchToDmc, mockExpandDmcPalette };
+  return { MOCK_DMC_COLORS, mockMatchToDmc };
 });
 
 vi.mock("../lib/dmc-colors", () => ({
@@ -41,8 +35,6 @@ vi.mock("../lib/dmc-colors", () => ({
 
 vi.mock("../lib/dmc-match", () => ({
   matchToDmc: (...args: Parameters<typeof mockMatchToDmc>) => mockMatchToDmc(...args),
-  expandDmcPalette: (...args: Parameters<typeof mockExpandDmcPalette>) =>
-    mockExpandDmcPalette(...args),
   nearestDmc: (hex: string) => ({ id: "321", name: "Red", hex }),
 }));
 
@@ -199,18 +191,7 @@ describe("Dmc page", () => {
     });
   });
 
-  it("Expand shades button calls expandDmcPalette and updates dmcSet", async () => {
-    await renderDmc([], [{ id: "321", name: "Red", hex: "#C72B3B" }]);
-    const expandBtn = screen.getByRole("button", { name: /expand shades/i });
-    await userEvent.click(expandBtn);
-    await waitFor(() => {
-      expect(mockExpandDmcPalette).toHaveBeenCalledTimes(1);
-      // The expanded palette should include Salmon Very Light (from mock)
-      expect(screen.getByText(/Salmon Very Light/)).toBeInTheDocument();
-    });
-  });
-
-  it("Go to Gradients button is present", async () => {
+it("Go to Gradients button is present", async () => {
     await renderDmc(["#FF0000"]);
     expect(
       screen.getByRole("button", { name: /go to gradients/i }),

@@ -62,7 +62,7 @@ export function dedupByDeltaE(hexes: string[], threshold: number): string[] {
   return out;
 }
 
-export type GradientMode = "natural" | "lightness" | "saturation" | "hue";
+export type GradientMode = "natural" | "lightness" | "saturation" | "hue" | "shade";
 
 const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
 const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
@@ -71,7 +71,11 @@ const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
 // allowed in "natural" mode.  Keeps candidates inside a cylinder rather than
 // the full half-space, filtering out colours that project between the anchors
 // but are far off-axis perceptually (e.g. a green between cream and tan).
-export const NATURAL_PERP_THRESHOLD = 0.35;
+// The relative threshold prevents off-axis colours for short A→B segments; the
+// absolute cap (0.15 OKLab units) prevents very long segments (e.g. white→black)
+// from pulling in saturated hues that have no business in a grey-scale ramp.
+export const NATURAL_PERP_THRESHOLD = 0.30;
+export const NATURAL_PERP_ABS_CAP = 0.15;
 
 /**
  * Given two anchor colours and a mode, return every palette colour that
@@ -93,6 +97,7 @@ export function gradientBetween(
   anchorA: string,
   anchorB: string,
   mode: GradientMode = "natural",
+  perpOpts?: { threshold?: number; absCap?: number },
 ): string[] {
   const a = hexToOklab(anchorA);
   const b = hexToOklab(anchorB);
@@ -108,7 +113,11 @@ export function gradientBetween(
     const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
     const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
     if (abLenSq === 0) return [];
-    const maxPerpSq = NATURAL_PERP_THRESHOLD * NATURAL_PERP_THRESHOLD * abLenSq;
+    const abLen = Math.sqrt(abLenSq);
+    const relThreshold = perpOpts?.threshold ?? NATURAL_PERP_THRESHOLD;
+    const absCapVal = perpOpts?.absCap ?? NATURAL_PERP_ABS_CAP;
+    const maxPerp = Math.min(relThreshold * abLen, absCapVal);
+    const maxPerpSq = maxPerp * maxPerp;
     return base
       .map(({ hex, lab }) => {
         const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
@@ -139,6 +148,10 @@ export function gradientBetween(
         ? chromaOf(x.lab) - chromaOf(y.lab)
         : chromaOf(y.lab) - chromaOf(x.lab))
       .map(({ hex }) => hex);
+
+  } else if (mode === "shade") {
+    // Shade mode has no natural between-filter — fall back to natural perp cylinder.
+    return gradientBetween(palette, anchorA, anchorB, "natural", perpOpts);
 
   } else { // hue
     const hA = hueOf(a), hB = hueOf(b);
@@ -218,6 +231,29 @@ function oklchToOklab(L: number, C: number, h: number): Oklab {
 function oklabDist(a: Oklab, b: Oklab): number {
   const dL = a.L - b.L, da = a.a - b.a, db = a.b - b.b;
   return Math.sqrt(dL * dL + da * da + db * db);
+}
+
+export function oklabDistHex(a: string, b: string): number {
+  return oklabDist(hexToOklab(a), hexToOklab(b));
+}
+
+/** Greedy nearest-neighbour sort starting from the lightest colour. */
+export function nearestNeighborSort(cs: string[]): string[] {
+  if (cs.length <= 1) return cs;
+  const items = cs.map((hex) => ({ hex, lab: hexToOklab(hex) }));
+  items.sort((a, b) => b.lab.L - a.lab.L);
+  const result = [items.shift()!];
+  while (items.length > 0) {
+    const last = result[result.length - 1].lab;
+    let minDistSq = Infinity, nearestIdx = 0;
+    for (let i = 0; i < items.length; i++) {
+      const lb = items[i].lab;
+      const dSq = (last.L - lb.L) ** 2 + (last.a - lb.a) ** 2 + (last.b - lb.b) ** 2;
+      if (dSq < minDistSq) { minDistSq = dSq; nearestIdx = i; }
+    }
+    result.push(items.splice(nearestIdx, 1)[0]);
+  }
+  return result.map((x) => x.hex);
 }
 
 export interface ShadeRampResult {
