@@ -229,6 +229,29 @@ function oklabDist(a: Oklab, b: Oklab): number {
   return Math.sqrt(dL * dL + da * da + db * db);
 }
 
+export function oklabDistHex(a: string, b: string): number {
+  return oklabDist(hexToOklab(a), hexToOklab(b));
+}
+
+/** Greedy nearest-neighbour sort starting from the lightest colour. */
+export function nearestNeighborSort(cs: string[]): string[] {
+  if (cs.length <= 1) return cs;
+  const items = cs.map((hex) => ({ hex, lab: hexToOklab(hex) }));
+  items.sort((a, b) => b.lab.L - a.lab.L);
+  const result = [items.shift()!];
+  while (items.length > 0) {
+    const last = result[result.length - 1].lab;
+    let minDistSq = Infinity, nearestIdx = 0;
+    for (let i = 0; i < items.length; i++) {
+      const lb = items[i].lab;
+      const dSq = (last.L - lb.L) ** 2 + (last.a - lb.a) ** 2 + (last.b - lb.b) ** 2;
+      if (dSq < minDistSq) { minDistSq = dSq; nearestIdx = i; }
+    }
+    result.push(items.splice(nearestIdx, 1)[0]);
+  }
+  return result.map((x) => x.hex);
+}
+
 export interface ShadeRampResult {
   /** Palette colors from darkest shadow → lightest shadow (nearest to midtone). */
   shadows: string[];

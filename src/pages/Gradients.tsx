@@ -39,6 +39,8 @@ import {
   swatchMeta,
   scoreGradientOutliers,
   gradientBetween,
+  oklabDistHex,
+  nearestNeighborSort,
   NATURAL_PERP_THRESHOLD,
   NATURAL_PERP_ABS_CAP,
   type GradientMode,
@@ -54,29 +56,6 @@ const MODE_DESC: Record<GradientMode, string> = {
 import { findDmcBridges, expandDmcPalette } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
-function oklabDist(a: string, b: string): number {
-  const la = hexToOklab(a), lb = hexToOklab(b);
-  return Math.sqrt((la.L - lb.L) ** 2 + (la.a - lb.a) ** 2 + (la.b - lb.b) ** 2);
-}
-
-// Greedy nearest-neighbour sort starting from the lightest colour.
-// Keeps perceptually similar colours adjacent — avoids the "grey between blues"
-// problem that projection-onto-L-axis sort produces for diverse palettes.
-function nearestNeighborSort(cs: string[]): string[] {
-  if (cs.length <= 1) return cs;
-  const remaining = [...cs].sort((a, b) => hexToOklab(b).L - hexToOklab(a).L); // lightest first
-  const result = [remaining.shift()!];
-  while (remaining.length > 0) {
-    const last = result[result.length - 1];
-    let minDist = Infinity, nearestIdx = 0;
-    for (let i = 0; i < remaining.length; i++) {
-      const d = oklabDist(last, remaining[i]);
-      if (d < minDist) { minDist = d; nearestIdx = i; }
-    }
-    result.push(remaining.splice(nearestIdx, 1)[0]);
-  }
-  return result;
-}
 
 export default function Gradients() {
   const { state } = usePalette();
@@ -281,7 +260,6 @@ export default function Gradients() {
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else if (overIdStr === "shelf-drop-zone") {
-      // Dragged a sequence item back to the shelf — remove and unpin it.
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
     } else {
@@ -311,7 +289,7 @@ export default function Gradients() {
     const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
     if (abLenSq === 0) return null;
     const abLen = Math.sqrt(abLenSq);
-    const maxPerp = Math.min(perpRel * abLen, perpCap);
+    const maxPerp = Math.min(perpOpts.threshold * abLen, perpOpts.absCap);
     const points = colorSpace.map((hex) => {
       const lab = hexToOklab(hex);
       const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
@@ -323,7 +301,7 @@ export default function Gradients() {
       return { hex, t, perp, included };
     });
     return { points, abLen, maxPerp, anchorAHex, anchorBHex };
-  }, [state.anchorA, state.anchorB, state.colors, colorSpace, perpRel, perpCap]);
+  }, [state.anchorA, state.anchorB, state.colors, colorSpace, perpOpts]);
 
   function handleModeChange(m: GradientMode) {
     setSortMode(m);
@@ -345,7 +323,7 @@ export default function Gradients() {
     // Endpoint or no between-candidates: nearest by OKLab distance.
     return colorSpace
       .filter((h) => !sequence.includes(h))
-      .sort((a, b) => oklabDist(a, selectedSeqHex) - oklabDist(b, selectedSeqHex))
+      .sort((a, b) => oklabDistHex(a, selectedSeqHex) - oklabDistHex(b, selectedSeqHex))
       .slice(0, 12);
   }, [selectedSeqHex, sequence, colorSpace, sortMode]);
 
