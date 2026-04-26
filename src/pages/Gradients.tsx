@@ -37,7 +37,17 @@ import {
   pickEvenly,
   swatchMeta,
   scoreGradientOutliers,
+  gradientBetween,
+  type GradientMode,
 } from "../lib/color";
+
+const MODES: GradientMode[] = ["natural", "lightness", "saturation", "hue"];
+const MODE_DESC: Record<GradientMode, string> = {
+  natural:    "Colors that perceptually sit on the line between your endpoints in OKLab space.",
+  lightness:  "Colors sorted by brightness — dark to light or light to dark depending on your endpoints.",
+  saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
+  hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
+};
 import { findDmcBridges } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
@@ -68,29 +78,47 @@ export default function Gradients() {
     [isDmcMode, dmcPool, state.colors],
   );
 
+  const [sortMode, setSortMode] = useState<GradientMode>("natural");
   const [sequence, setSequence] = useState<string[]>([]);
   const [pinnedHexes, setPinnedHexes] = useState<string[]>([]);
   const [selectedSeqHex, setSelectedSeqHex] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [maxColors, setMaxColors] = useState<number>(0); // 0 = not yet set
 
-  // Build a sorted sequence from the current anchors (or lightness fallback).
-  function buildSorted(cs: string[]): string[] {
+  // Keep a ref so the seeding effect can check pins without adding them to its dep array.
+  const pinnedRef = useRef<string[]>([]);
+  useEffect(() => { pinnedRef.current = pinnedHexes; }, [pinnedHexes]);
+
+  // Sort a set of colours according to the given mode (or the current sortMode).
+  function sortWithMode(cs: string[], m: GradientMode = sortMode): string[] {
     const a = state.colors.find((c) => c.id === state.anchorA)?.hex;
     const b = state.colors.find((c) => c.id === state.anchorB)?.hex;
-    if (a && b) return sortGradient(cs, a, b);
-    const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
-    return byL.length >= 2 ? sortGradient(cs, byL[0], byL[byL.length - 1]) : cs;
+    if (m === "natural") {
+      if (a && b) return sortGradient(cs, a, b);
+      const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
+      return byL.length >= 2 ? sortGradient(cs, byL[0], byL[byL.length - 1]) : cs;
+    }
+    if (m === "lightness") return [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
+    if (m === "saturation") {
+      const chroma = (h: string) => { const lab = hexToOklab(h); return Math.sqrt(lab.a * lab.a + lab.b * lab.b); };
+      return [...cs].sort((x, y) => chroma(x) - chroma(y));
+    }
+    // hue
+    const hueOf = (h: string) => { const lab = hexToOklab(h); return Math.atan2(lab.b, lab.a); };
+    return [...cs].sort((x, y) => hueOf(x) - hueOf(y));
   }
 
-  // Seed sequence on first load and whenever anchors change.
+  function buildSorted(cs: string[]): string[] { return sortWithMode(cs, sortMode); }
+
+  // Seed sequence on first load or when anchors newly arrive (only if no manual picks).
   const prevAnchorKey = useRef("");
   useEffect(() => {
     if (colorSpace.length === 0) return;
     const anchorKey = `${state.anchorA ?? ""}|${state.anchorB ?? ""}`;
     const anchorsChanged = anchorKey !== prevAnchorKey.current && !!(state.anchorA && state.anchorB);
-    // Only re-seed automatically: on first load, or when anchors newly arrive.
-    if (sequence.length > 0 && !anchorsChanged) return;
+    // Re-seed only: (a) sequence is empty, or (b) anchors newly arrived AND no manual picks yet.
+    const shouldSeed = sequence.length === 0 || (anchorsChanged && pinnedRef.current.length === 0);
+    if (!shouldSeed) return;
     prevAnchorKey.current = anchorKey;
     const sorted = buildSorted(colorSpace);
     const limit = maxColors > 0 ? maxColors : colorSpace.length;
@@ -106,33 +134,47 @@ export default function Gradients() {
     if (selectedSeqHex && !sequence.includes(selectedSeqHex)) setSelectedSeqHex(null);
   }, [sequence, selectedSeqHex]);
 
-  // When the user manually adds a color past the current limit, bump the limit.
+  // Bump maxColors when sequence grows past it (manual additions).
   useEffect(() => {
     if (maxColors > 0 && sequence.length > maxColors) setMaxColors(sequence.length);
   }, [sequence.length, maxColors]);
 
+  // Bump maxColors up when pinned count exceeds it.
+  useEffect(() => {
+    if (maxColors > 0 && pinnedHexes.length > maxColors) setMaxColors(pinnedHexes.length);
+  }, [pinnedHexes.length, maxColors]);
+
   function applyMaxColors(n: number) {
-    setMaxColors(n);
+    // Can never go below the number of pinned colors.
+    const effective = Math.max(n, pinnedHexes.length);
+    setMaxColors(effective);
     setSequence((prev) => {
-      if (n >= prev.length) {
-        // Add the next best-fitting colors from the shelf, inserted at their sorted positions.
-        const toAdd = n - prev.length;
+      if (effective >= prev.length) {
+        // Add the next best-fitting colors from the shelf, then re-sort to match gradient direction.
+        const toAdd = effective - prev.length;
         const shelf = colorSpace.filter((h) => !prev.includes(h));
         if (shelf.length === 0 || toAdd <= 0) return prev;
         const allSorted = buildSorted(colorSpace);
         const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
-        let result = [...prev];
-        for (const hex of candidates) {
-          const sortedPos = allSorted.indexOf(hex);
-          const insertAt = result.findIndex((h) => allSorted.indexOf(h) > sortedPos);
-          result.splice(insertAt === -1 ? result.length : insertAt, 0, hex);
-        }
-        return result;
+        if (candidates.length === 0) return prev;
+        const combined = [...prev, ...candidates];
+        // Determine whether the current sequence runs in the same or reverse direction vs allSorted.
+        const isReversed = prev.length >= 2 &&
+          allSorted.indexOf(prev[prev.length - 1]) < allSorted.indexOf(prev[0]);
+        combined.sort((a, b) => {
+          const ai = allSorted.indexOf(a);
+          const bi = allSorted.indexOf(b);
+          if (ai === -1 && bi === -1) return 0;
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return isReversed ? bi - ai : ai - bi;
+        });
+        return combined;
       } else {
         // Keep all pinned colors; fill remaining slots with evenly-spaced non-pinned.
         const pinned = prev.filter((h) => pinnedHexes.includes(h));
         const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
-        const needed = Math.max(0, n - pinned.length);
+        const needed = Math.max(0, effective - pinned.length);
         const selected = needed > 0 ? pickEvenly(nonPinned, needed) : [];
         return prev.filter((h) => pinned.includes(h) || selected.includes(h));
       }
@@ -198,14 +240,29 @@ export default function Gradients() {
     return new Map(results.map((r) => [r.hex, r.isOutlier]));
   }, [sequence]);
 
-  // Nearest alternatives from colorSpace for the selected sequence slot.
+  function handleModeChange(m: GradientMode) {
+    setSortMode(m);
+    setSequence((prev) => prev.length < 2 ? prev : sortWithMode(prev, m));
+    setSelectedSeqHex(null);
+  }
+
+  // Alternatives for the selected slot: use gradientBetween between its neighbours (mode-aware).
   const alternatives = useMemo(() => {
     if (!selectedSeqHex) return [];
+    const idx = sequence.indexOf(selectedSeqHex);
+    const leftHex = idx > 0 ? sequence[idx - 1] : null;
+    const rightHex = idx < sequence.length - 1 ? sequence[idx + 1] : null;
+    if (leftHex && rightHex) {
+      const between = gradientBetween(colorSpace, leftHex, rightHex, sortMode)
+        .filter((h) => !sequence.includes(h));
+      if (between.length > 0) return between.slice(0, 12);
+    }
+    // Endpoint or no between-candidates: nearest by OKLab distance.
     return colorSpace
       .filter((h) => !sequence.includes(h))
       .sort((a, b) => oklabDist(a, selectedSeqHex) - oklabDist(b, selectedSeqHex))
       .slice(0, 12);
-  }, [selectedSeqHex, colorSpace, sequence]);
+  }, [selectedSeqHex, sequence, colorSpace, sortMode]);
 
   function handleSwapAlternative(candidate: string) {
     if (!selectedSeqHex) return;
@@ -217,7 +274,7 @@ export default function Gradients() {
       next[idx] = candidate;
       return next;
     });
-    // Remove old pin, add pin for the explicitly chosen replacement.
+    // Remove old pin, pin the explicitly chosen replacement.
     setPinnedHexes((prev) => {
       const next = prev.filter((h) => h !== oldHex);
       return next.includes(candidate) ? next : [...next, candidate];
@@ -231,6 +288,7 @@ export default function Gradients() {
     : null;
 
   const pinnedFloor = Math.max(1, pinnedHexes.length);
+  const sliderValue = Math.max(maxColors > 0 ? maxColors : colorSpace.length, pinnedFloor);
 
   async function handleSave() {
     if (sequence.length < 2) return;
@@ -281,17 +339,46 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
+          {/* ── Mode selector ─────────────────────────────────────────── */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleModeChange(m)}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 20,
+                  border: "1px solid var(--ion-color-primary)",
+                  background: sortMode === m ? "var(--ion-color-primary)" : "transparent",
+                  color: sortMode === m ? "var(--ion-color-primary-contrast)" : "var(--ion-color-primary)",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  textTransform: "capitalize",
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: 12, color: "var(--ion-color-medium)", margin: "0 0 12px" }}>
+            {MODE_DESC[sortMode]}
+          </p>
+
           {/* ── Max-colors slider ─────────────────────────────────────── */}
           {colorSpace.length > 1 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <span style={{ fontSize: 12, color: "var(--ion-color-medium)", whiteSpace: "nowrap" }}>
-                Colors: {maxColors > 0 ? maxColors : colorSpace.length}
+                Colors: {sequence.length > 0 ? sequence.length : sliderValue}
+                {pinnedHexes.length > 0 && (
+                  <span style={{ opacity: 0.6 }}> ({pinnedHexes.length} pinned)</span>
+                )}
               </span>
               <input
                 type="range"
                 min={pinnedFloor}
                 max={colorSpace.length}
-                value={maxColors > 0 ? maxColors : colorSpace.length}
+                value={sliderValue}
                 onChange={(e) => applyMaxColors(Number(e.target.value))}
                 style={{ flex: 1 }}
               />
@@ -373,7 +460,7 @@ export default function Gradients() {
                           fontWeight: 600,
                         }}
                       >
-                        {pinnedHexes.includes(selectedSeqHex) ? "Pinned" : "Pin"}
+                        {pinnedHexes.includes(selectedSeqHex) ? "Pinned ✓" : "Pin"}
                       </button>
                       <button
                         type="button"
@@ -386,7 +473,7 @@ export default function Gradients() {
                     </div>
                   </div>
                   {alternatives.length === 0 ? (
-                    <span style={{ fontSize: 12, color: "var(--ion-color-medium)" }}>No alternatives on shelf.</span>
+                    <span style={{ fontSize: 12, color: "var(--ion-color-medium)" }}>No alternatives on shelf — all palette colors are in the gradient.</span>
                   ) : (
                     <>
                       <p style={{ margin: "0 0 6px", fontSize: 11, color: "var(--ion-color-medium)" }}>
@@ -433,7 +520,7 @@ export default function Gradients() {
           {shelf.length > 0 && (
             <>
               <p style={{ margin: "12px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
-                {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position, tap to append
+                {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position, tap to append & pin
               </p>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                 {shelf.map((hex) => {
@@ -514,17 +601,35 @@ function SeqItem({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: hex });
 
-  let boxShadow = "";
-  if (isPinned) boxShadow = "inset 0 4px 0 rgba(255,255,255,0.55)";
-  if (isSelected) boxShadow = (isPinned ? "inset 0 4px 0 rgba(255,255,255,0.55), " : "") + "0 0 0 2px white";
+  // Use onPointerUp with distance tracking for reliable tap detection on mobile
+  // (onClick can be suppressed by touch-action:none on some iOS builds).
+  const tapRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerHandlers = {
+    onPointerDown(e: React.PointerEvent) {
+      tapRef.current = { x: e.clientX, y: e.clientY };
+      // Forward to dnd-kit's sensor so drag still works.
+      (listeners as Record<string, (e: React.PointerEvent) => void>)?.onPointerDown?.(e);
+    },
+    onPointerUp(e: React.PointerEvent) {
+      if (tapRef.current) {
+        const dist = Math.hypot(e.clientX - tapRef.current.x, e.clientY - tapRef.current.y);
+        tapRef.current = null;
+        if (dist < 8) onSelect();
+      }
+    },
+  };
+
+  const boxShadow = isSelected
+    ? "0 0 0 2px white, 0 0 0 4px rgba(0,0,0,0.35)"
+    : undefined;
 
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      {...pointerHandlers}
       title={title}
-      onClick={onSelect}
       style={{
         position: "relative",
         flex: 1,
@@ -539,11 +644,26 @@ function SeqItem({
         opacity: isDragging ? 0.35 : 1,
         outline: isOutlier && !isSelected ? "3px solid #f59e0b" : "none",
         outlineOffset: -3,
-        boxShadow: boxShadow || undefined,
+        boxShadow,
         transform: CSS.Transform.toString(transform),
         transition,
       }}
     >
+      {/* Pin indicator — small white dot with dark halo, visible on any color */}
+      {isPinned && (
+        <div style={{
+          position: "absolute",
+          top: 4,
+          right: 4,
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: "rgba(255,255,255,0.95)",
+          border: "1px solid rgba(0,0,0,0.35)",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.5)",
+          pointerEvents: "none",
+        }} />
+      )}
       <div style={{
         position: "absolute",
         bottom: 2,
