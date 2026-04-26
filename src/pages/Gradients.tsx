@@ -17,6 +17,7 @@ import {
   PointerSensor,
   closestCenter,
   useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -48,7 +49,7 @@ const MODE_DESC: Record<GradientMode, string> = {
   saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
   hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
 };
-import { findDmcBridges } from "../lib/dmc-match";
+import { findDmcBridges, expandDmcPalette } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
 function oklabDist(a: string, b: string): number {
@@ -66,11 +67,12 @@ export default function Gradients() {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const isDmcMode = searchParams.get("mode") === "dmc" && dmcSet.length > 0;
 
-  // Extra DMC colors discovered via "Fill gaps" — local to this page.
+  // Extra DMC colors discovered via "Fill gaps" or "Expand shades" — local to this page.
   const [dmcBridges, setDmcBridges] = useState<DmcColor[]>([]);
+  const [dmcShades, setDmcShades] = useState<DmcColor[]>([]);
   const dmcPool = useMemo(
-    () => isDmcMode ? [...dmcSet, ...dmcBridges] : [],
-    [isDmcMode, dmcSet, dmcBridges],
+    () => isDmcMode ? [...dmcSet, ...dmcBridges, ...dmcShades] : [],
+    [isDmcMode, dmcSet, dmcBridges, dmcShades],
   );
 
   const colorSpace: string[] = useMemo(
@@ -120,12 +122,23 @@ export default function Gradients() {
     const shouldSeed = sequence.length === 0 || (anchorsChanged && pinnedRef.current.length === 0);
     if (!shouldSeed) return;
     prevAnchorKey.current = anchorKey;
-    const sorted = buildSorted(colorSpace);
-    const limit = maxColors > 0 ? maxColors : colorSpace.length;
-    setSequence(limit < sorted.length ? pickEvenly(sorted, limit) : sorted);
-    setPinnedHexes([]);
+    const anchorAHex = state.colors.find((c) => c.id === state.anchorA)?.hex;
+    const anchorBHex = state.colors.find((c) => c.id === state.anchorB)?.hex;
+    let seeded: string[];
+    if (anchorAHex && anchorBHex && colorSpace.includes(anchorAHex) && colorSpace.includes(anchorBHex)) {
+      // Anchors set: start with A, the colors that lie between them, and B.
+      const between = gradientBetween(colorSpace, anchorAHex, anchorBHex, sortMode);
+      seeded = [anchorAHex, ...between, anchorBHex];
+    } else {
+      const sorted = buildSorted(colorSpace);
+      const limit = maxColors > 0 ? maxColors : colorSpace.length;
+      seeded = limit < sorted.length ? pickEvenly(sorted, limit) : sorted;
+    }
+    setSequence(seeded);
+    // Pin the anchor endpoints so the slider can't remove them.
+    setPinnedHexes(anchorAHex && anchorBHex ? [anchorAHex, anchorBHex] : []);
     setSelectedSeqHex(null);
-    if (maxColors === 0) setMaxColors(colorSpace.length);
+    if (maxColors === 0) setMaxColors(seeded.length);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorSpace, state.anchorA, state.anchorB]);
 
@@ -145,20 +158,29 @@ export default function Gradients() {
   }, [pinnedHexes.length, maxColors]);
 
   function applyMaxColors(n: number) {
-    // Can never go below the number of pinned colors.
     const effective = Math.max(n, pinnedHexes.length);
     setMaxColors(effective);
     setSequence((prev) => {
       if (effective >= prev.length) {
-        // Add the next best-fitting colors from the shelf, then re-sort to match gradient direction.
         const toAdd = effective - prev.length;
         const shelf = colorSpace.filter((h) => !prev.includes(h));
         if (shelf.length === 0 || toAdd <= 0) return prev;
         const allSorted = buildSorted(colorSpace);
-        const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
+        // When there are endpoints, only add colors that perceptually lie between them.
+        // gradientBetween filters by perpendicular distance so off-axis colors (taupe between blues) are excluded.
+        let candidatePool: string[];
+        if (prev.length >= 2) {
+          const firstHex = prev[0];
+          const lastHex = prev[prev.length - 1];
+          const between = gradientBetween(colorSpace, firstHex, lastHex, sortMode)
+            .filter((h) => shelf.includes(h));
+          candidatePool = between.length > 0 ? between : allSorted.filter((h) => shelf.includes(h));
+        } else {
+          candidatePool = allSorted.filter((h) => shelf.includes(h));
+        }
+        const candidates = candidatePool.slice(0, toAdd);
         if (candidates.length === 0) return prev;
         const combined = [...prev, ...candidates];
-        // Determine whether the current sequence runs in the same or reverse direction vs allSorted.
         const isReversed = prev.length >= 2 &&
           allSorted.indexOf(prev[prev.length - 1]) < allSorted.indexOf(prev[0]);
         combined.sort((a, b) => {
@@ -171,7 +193,6 @@ export default function Gradients() {
         });
         return combined;
       } else {
-        // Keep all pinned colors; fill remaining slots with evenly-spaced non-pinned.
         const pinned = prev.filter((h) => pinnedHexes.includes(h));
         const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
         const needed = Math.max(0, effective - pinned.length);
@@ -196,6 +217,13 @@ export default function Gradients() {
         return next;
       });
     }
+  }
+
+  function handleExpandShades() {
+    const expanded = expandDmcPalette(dmcPool, 1);
+    const existingIds = new Set(dmcPool.map((d) => d.id));
+    const newShades = expanded.filter((d) => !existingIds.has(d.id));
+    if (newShades.length > 0) setDmcShades((prev) => [...prev, ...newShades]);
   }
 
   // ── dnd-kit ──────────────────────────────────────────────────────────────
@@ -224,6 +252,10 @@ export default function Gradients() {
         return next;
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
+    } else if (overIdStr === "shelf-drop-zone") {
+      // Dragged a sequence item back to the shelf — remove and unpin it.
+      setSequence((prev) => prev.filter((h) => h !== activeIdStr));
+      setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
     } else {
       setSequence((prev) => {
         const oldIdx = prev.indexOf(activeIdStr);
@@ -281,6 +313,8 @@ export default function Gradients() {
     });
     setSelectedSeqHex(candidate);
   }
+
+  const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
@@ -517,12 +551,26 @@ export default function Gradients() {
           )}
 
           {/* ── Shelf ─────────────────────────────────────────────────── */}
-          {shelf.length > 0 && (
+          {(shelf.length > 0 || (activeId && !activeId.startsWith("shelf:"))) && (
             <>
               <p style={{ margin: "12px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
                 {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position, tap to append & pin
               </p>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+              <div
+                ref={setShelfDropRef}
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  marginBottom: 16,
+                  minHeight: 52,
+                  borderRadius: 8,
+                  padding: 4,
+                  background: isOverShelf ? "rgba(var(--ion-color-primary-rgb), 0.1)" : "transparent",
+                  border: isOverShelf ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                  transition: "background 0.15s, border-color 0.15s",
+                }}
+              >
                 {shelf.map((hex) => {
                   const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                   return (
@@ -537,14 +585,24 @@ export default function Gradients() {
                     />
                   );
                 })}
+                {activeId && !activeId.startsWith("shelf:") && shelf.length === 0 && (
+                  <span style={{ fontSize: 12, color: "var(--ion-color-medium)", alignSelf: "center", padding: "0 4px" }}>
+                    Drop here to remove
+                  </span>
+                )}
               </div>
             </>
           )}
 
-          {/* ── DMC fill-gaps ─────────────────────────────────────────── */}
+          {/* ── DMC actions ───────────────────────────────────────────── */}
           {isDmcMode && sequence.length >= 2 && (
             <IonButton fill="outline" expand="block" onClick={handleFillGaps} style={{ marginBottom: 8 }}>
               Fill gaps with DMC colors
+            </IonButton>
+          )}
+          {isDmcMode && (
+            <IonButton fill="outline" expand="block" onClick={handleExpandShades} style={{ marginBottom: 8 }}>
+              Expand shades
             </IonButton>
           )}
 
