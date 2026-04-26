@@ -99,8 +99,26 @@ export default function Gradients() {
 
   function applyMaxColors(n: number) {
     setMaxColors(n);
-    const sorted = buildSorted(colorSpace);
-    setSequence(n < sorted.length ? pickEvenly(sorted, n) : sorted);
+    setSequence((prev) => {
+      if (n >= prev.length) {
+        // Add the next best-fitting colors from the shelf, inserted at their sorted positions.
+        const toAdd = n - prev.length;
+        const shelf = colorSpace.filter((h) => !prev.includes(h));
+        if (shelf.length === 0 || toAdd <= 0) return prev;
+        const allSorted = buildSorted(colorSpace);
+        const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
+        let result = [...prev];
+        for (const hex of candidates) {
+          const sortedPos = allSorted.indexOf(hex);
+          const insertAt = result.findIndex((h) => allSorted.indexOf(h) > sortedPos);
+          result.splice(insertAt === -1 ? result.length : insertAt, 0, hex);
+        }
+        return result;
+      } else {
+        // Trim to n evenly-spaced items from the current ordering.
+        return pickEvenly(prev, n);
+      }
+    });
   }
 
   function handleFillGaps() {
@@ -244,7 +262,7 @@ export default function Gradients() {
               </div>
 
               <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
-                <div style={{ display: "flex", marginTop: 14, marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
+                <div style={{ display: "flex", marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
                   {sequence.map((hex, i) => {
                     const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                     return (
@@ -260,7 +278,6 @@ export default function Gradients() {
                             ? "Perceptual outlier — may not blend smoothly"
                             : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
                         }
-                        onRemove={() => setSequence((prev) => prev.filter((_, j) => j !== i))}
                       />
                     );
                   })}
@@ -342,7 +359,6 @@ function SeqItem({
   isOutlier,
   label,
   title,
-  onRemove,
 }: {
   hex: string;
   index: number;
@@ -350,7 +366,6 @@ function SeqItem({
   isOutlier: boolean;
   label: string;
   title: string;
-  onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: hex });
   return (
@@ -377,32 +392,6 @@ function SeqItem({
         transition,
       }}
     >
-      <button
-        type="button"
-        aria-label={`Remove ${hex} from sequence`}
-        onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        onPointerDown={(e) => e.stopPropagation()}
-        style={{
-          position: "absolute",
-          top: -10,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "rgba(255,255,255,0.9)",
-          border: "1px solid rgba(0,0,0,0.2)",
-          cursor: "pointer",
-          padding: 0,
-          fontSize: 10,
-          lineHeight: "14px",
-          textAlign: "center",
-          color: "#333",
-          zIndex: 1,
-        }}
-      >
-        ×
-      </button>
       <div style={{
         position: "absolute",
         bottom: 2,
