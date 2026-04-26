@@ -62,7 +62,7 @@ export function dedupByDeltaE(hexes: string[], threshold: number): string[] {
   return out;
 }
 
-export type GradientMode = "natural" | "lightness" | "saturation" | "hue";
+export type GradientMode = "natural" | "lightness" | "saturation" | "hue" | "shade";
 
 const hueOf = (lab: Oklab) => Math.atan2(lab.b, lab.a) * (180 / Math.PI);
 const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
@@ -148,6 +148,10 @@ export function gradientBetween(
         ? chromaOf(x.lab) - chromaOf(y.lab)
         : chromaOf(y.lab) - chromaOf(x.lab))
       .map(({ hex }) => hex);
+
+  } else if (mode === "shade") {
+    // Shade mode has no natural between-filter — fall back to natural perp cylinder.
+    return gradientBetween(palette, anchorA, anchorB, "natural", perpOpts);
 
   } else { // hue
     const hA = hueOf(a), hB = hueOf(b);

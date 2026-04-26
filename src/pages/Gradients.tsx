@@ -41,17 +41,20 @@ import {
   gradientBetween,
   oklabDistHex,
   nearestNeighborSort,
+  shadeRamp,
   NATURAL_PERP_THRESHOLD,
   NATURAL_PERP_ABS_CAP,
   type GradientMode,
 } from "../lib/color";
 
 const MODES: GradientMode[] = ["natural", "lightness", "saturation", "hue"];
+const DMC_MODES: GradientMode[] = [...MODES, "shade"];
 const MODE_DESC: Record<GradientMode, string> = {
   natural:    "Colors that perceptually sit on the line between your endpoints in OKLab space.",
   lightness:  "Colors sorted by brightness — dark to light or light to dark depending on your endpoints.",
   saturation: "Colors sorted by intensity — from muted to vivid or vice versa.",
   hue:        "Colors sorted along the shortest arc of the color wheel between your endpoints.",
+  shade:      "Hue-shifted shading ramp — shadows drift cool, highlights drift warm, from the median-lightness midtone.",
 };
 import { findDmcBridges, expandDmcPalette } from "../lib/dmc-match";
 import { renderGradientPng } from "../lib/gradient-canvas";
@@ -112,9 +115,17 @@ export default function Gradients() {
       const chroma = (h: string) => { const lab = hexToOklab(h); return Math.sqrt(lab.a * lab.a + lab.b * lab.b); };
       return [...cs].sort((x, y) => chroma(x) - chroma(y));
     }
-    // hue
-    const hueOf = (h: string) => { const lab = hexToOklab(h); return Math.atan2(lab.b, lab.a); };
-    return [...cs].sort((x, y) => hueOf(x) - hueOf(y));
+    if (m === "hue") {
+      const hueOf = (h: string) => { const lab = hexToOklab(h); return Math.atan2(lab.b, lab.a); };
+      return [...cs].sort((x, y) => hueOf(x) - hueOf(y));
+    }
+    // shade — hue-shifted shadow→highlight ramp from the median-lightness midtone
+    const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
+    const midtone = byL[Math.floor(byL.length / 2)];
+    const { shadows, highlights } = shadeRamp(cs, midtone, cs.length);
+    const ordered = [...shadows, midtone, ...highlights];
+    const inRamp = new Set(ordered);
+    return [...ordered, ...cs.filter((h) => !inRamp.has(h))];
   }
 
   function buildSorted(cs: string[]): string[] { return sortWithMode(cs, sortMode); }
@@ -406,7 +417,7 @@ export default function Gradients() {
         >
           {/* ── Mode selector ─────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-            {MODES.map((m) => (
+            {(isDmcMode ? DMC_MODES : MODES).map((m) => (
               <button
                 key={m}
                 type="button"
