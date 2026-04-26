@@ -244,7 +244,7 @@ export default function Gradients() {
               </div>
 
               <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
-                <div style={{ display: "flex", marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
+                <div style={{ display: "flex", marginTop: 14, marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
                   {sequence.map((hex, i) => {
                     const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                     return (
@@ -384,19 +384,21 @@ function SeqItem({
         onPointerDown={(e) => e.stopPropagation()}
         style={{
           position: "absolute",
-          top: 2,
-          right: 2,
-          width: 18,
-          height: 18,
+          top: -10,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 16,
+          height: 16,
           borderRadius: "50%",
-          background: "rgba(255,255,255,0.85)",
-          border: "1px solid rgba(0,0,0,0.15)",
+          background: "rgba(255,255,255,0.9)",
+          border: "1px solid rgba(0,0,0,0.2)",
           cursor: "pointer",
           padding: 0,
-          fontSize: 12,
-          lineHeight: "16px",
+          fontSize: 10,
+          lineHeight: "14px",
           textAlign: "center",
-          color: "#222",
+          color: "#333",
+          zIndex: 1,
         }}
       >
         ×
