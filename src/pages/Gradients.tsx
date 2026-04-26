@@ -92,6 +92,11 @@ export default function Gradients() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorSpace, state.anchorA, state.anchorB]);
 
+  // When the user manually adds a color past the current limit, bump the limit.
+  useEffect(() => {
+    if (maxColors > 0 && sequence.length > maxColors) setMaxColors(sequence.length);
+  }, [sequence.length, maxColors]);
+
   function applyMaxColors(n: number) {
     setMaxColors(n);
     const sorted = buildSorted(colorSpace);
