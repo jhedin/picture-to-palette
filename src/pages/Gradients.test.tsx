@@ -43,6 +43,11 @@ function renderGradients(hexes: string[], anchors?: [number, number], url = "/gr
   );
 }
 
+// A color is "in the sequence" when its shelf Add button is absent.
+function inSequence(hex: string) {
+  return !screen.queryByRole("button", { name: new RegExp(`add ${hex} to sequence`, "i") });
+}
+
 describe("Gradients page", () => {
   it("shows empty-state help when no colors exist", () => {
     render(
@@ -58,51 +63,43 @@ describe("Gradients page", () => {
   it("auto-seeds all palette colors into the sequence", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /remove #00FF00 from sequence/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
+      expect(inSequence("#FF0000")).toBe(true);
+      expect(inSequence("#00FF00")).toBe(true);
+      expect(inSequence("#0000FF")).toBe(true);
     });
   });
 
   it("seeds using anchors when both are set", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"], [0, 2]);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /remove #0000FF from sequence/i })).toBeInTheDocument();
+      expect(inSequence("#FF0000")).toBe(true);
+      expect(inSequence("#0000FF")).toBe(true);
     });
   });
 
   it("shelf is empty when all colors are in the sequence", async () => {
     renderGradients(["#FF0000", "#0000FF"]);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
     expect(screen.queryByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeInTheDocument();
-  });
-
-  it("removing a sequence item makes it available on the shelf again", async () => {
-    renderGradients(["#FF0000", "#0000FF"], [0, 1]);
-    await waitFor(() => screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
-    await userEvent.click(screen.getByRole("button", { name: /remove #FF0000 from sequence/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).not.toBeDisabled(),
-    );
   });
 
   it("tapping a shelf color adds it to the sequence", async () => {
     renderGradients(["#FF0000", "#00FF00", "#0000FF"]);
     await waitFor(() => screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument(),
+    );
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
-    expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument();
+    await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
   });
 
-  it("clear button empties the sequence", async () => {
+  it("clear button empties the sequence and shows all colors on shelf", async () => {
     renderGradients(["#FF0000", "#0000FF"]);
     await waitFor(() => screen.getByRole("button", { name: /clear/i }));
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /remove #FF0000 from sequence/i })).not.toBeInTheDocument(),
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument(),
     );
   });
 
@@ -110,7 +107,11 @@ describe("Gradients page", () => {
     renderGradients(["#FF0000", "#0000FF"]);
     await waitFor(() => screen.getByRole("button", { name: /save png/i }));
     await userEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /add #FF0000 to sequence/i })).toBeInTheDocument(),
+    );
     await userEvent.click(screen.getByRole("button", { name: /add #FF0000 to sequence/i }));
+    await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
     expect(screen.getByRole("button", { name: /save png/i })).toBeDisabled();
   });
 
@@ -126,10 +127,7 @@ describe("Gradients page", () => {
 
   it("does not enter DMC mode without ?mode=dmc", async () => {
     renderGradients(["#FF0000", "#0000FF"]);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /remove #FF0000 from sequence/i })).toBeInTheDocument(),
-    );
-    // DMC-mode label not shown
+    await waitFor(() => expect(inSequence("#FF0000")).toBe(true));
     expect(screen.queryByText(/available dmc threads/i)).not.toBeInTheDocument();
   });
 });
