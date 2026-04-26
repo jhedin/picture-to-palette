@@ -71,7 +71,11 @@ const chromaOf = (lab: Oklab) => Math.sqrt(lab.a * lab.a + lab.b * lab.b);
 // allowed in "natural" mode.  Keeps candidates inside a cylinder rather than
 // the full half-space, filtering out colours that project between the anchors
 // but are far off-axis perceptually (e.g. a green between cream and tan).
-export const NATURAL_PERP_THRESHOLD = 0.35;
+// The relative threshold prevents off-axis colours for short A→B segments; the
+// absolute cap (0.15 OKLab units) prevents very long segments (e.g. white→black)
+// from pulling in saturated hues that have no business in a grey-scale ramp.
+export const NATURAL_PERP_THRESHOLD = 0.30;
+const NATURAL_PERP_ABS_CAP = 0.15;
 
 /**
  * Given two anchor colours and a mode, return every palette colour that
@@ -108,7 +112,9 @@ export function gradientBetween(
     const ab = { L: b.L - a.L, a: b.a - a.a, b: b.b - a.b };
     const abLenSq = ab.L * ab.L + ab.a * ab.a + ab.b * ab.b;
     if (abLenSq === 0) return [];
-    const maxPerpSq = NATURAL_PERP_THRESHOLD * NATURAL_PERP_THRESHOLD * abLenSq;
+    const abLen = Math.sqrt(abLenSq);
+    const maxPerp = Math.min(NATURAL_PERP_THRESHOLD * abLen, NATURAL_PERP_ABS_CAP);
+    const maxPerpSq = maxPerp * maxPerp;
     return base
       .map(({ hex, lab }) => {
         const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };

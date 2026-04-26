@@ -57,6 +57,25 @@ function oklabDist(a: string, b: string): number {
   return Math.sqrt((la.L - lb.L) ** 2 + (la.a - lb.a) ** 2 + (la.b - lb.b) ** 2);
 }
 
+// Greedy nearest-neighbour sort starting from the lightest colour.
+// Keeps perceptually similar colours adjacent — avoids the "grey between blues"
+// problem that projection-onto-L-axis sort produces for diverse palettes.
+function nearestNeighborSort(cs: string[]): string[] {
+  if (cs.length <= 1) return cs;
+  const remaining = [...cs].sort((a, b) => hexToOklab(b).L - hexToOklab(a).L); // lightest first
+  const result = [remaining.shift()!];
+  while (remaining.length > 0) {
+    const last = result[result.length - 1];
+    let minDist = Infinity, nearestIdx = 0;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = oklabDist(last, remaining[i]);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    }
+    result.push(remaining.splice(nearestIdx, 1)[0]);
+  }
+  return result;
+}
+
 export default function Gradients() {
   const { state } = usePalette();
   const history = useHistory();
@@ -97,8 +116,9 @@ export default function Gradients() {
     const b = state.colors.find((c) => c.id === state.anchorB)?.hex;
     if (m === "natural") {
       if (a && b) return sortGradient(cs, a, b);
-      const byL = [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
-      return byL.length >= 2 ? sortGradient(cs, byL[0], byL[byL.length - 1]) : cs;
+      // Without anchors use nearest-neighbour so similar colours stay adjacent
+      // (projection-onto-L-axis would interleave unrelated hues at the same lightness).
+      return nearestNeighborSort(cs);
     }
     if (m === "lightness") return [...cs].sort((x, y) => hexToOklab(x).L - hexToOklab(y).L);
     if (m === "saturation") {
