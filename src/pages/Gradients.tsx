@@ -575,7 +575,7 @@ function ShelfItem({ hex, title, onTap }: { hex: string; title: string; onTap: (
       style={{
         width: 44,
         height: 44,
-        borderRadius: "50%",
+        borderRadius: 8,
         background: hex,
         border: "2px solid rgba(0,0,0,0.12)",
         cursor: "grab",
