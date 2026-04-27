@@ -60,6 +60,10 @@ import { idealDmcPositions, nearestUnusedDmc } from "../lib/dmc-match";
 import { DMC_COLORS } from "../lib/dmc-colors";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
+function srgbToLinear(c: number): number {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
 
 export default function Gradients() {
   const { state, dispatch } = usePalette();
@@ -239,10 +243,12 @@ export default function Gradients() {
           const endB = hexToOklab(result[result.length - 1]);
           const ab = { L: endB.L - endA.L, a: endB.a - endA.a, b: endB.b - endA.b };
           const abLenSq = ab.L ** 2 + ab.a ** 2 + ab.b ** 2;
+          // Pre-compute OKLab entries for colorSpace candidates (t-filter + distance).
+          const csLabs = colorSpace.map((hex) => ({ hex, lab: hexToOklab(hex) }));
+          // Cache labs array and splice in new entries rather than recomputing each step.
+          let labs = result.map(hexToOklab);
 
           for (let step = 0; step < toAdd; step++) {
-            const labs = result.map(hexToOklab);
-            // Sort gaps largest-first so we can try the next if the biggest has no valid candidate.
             const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
               const a = labs[i], b = labs[i + 1];
               return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
@@ -252,21 +258,21 @@ export default function Gradients() {
             for (const { i: gapIdx } of gaps) {
               const a = labs[gapIdx], b = labs[gapIdx + 1];
               const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-              let bestHex: string | null = null, bestDistSq = Infinity;
-              for (const hex of colorSpace) {
+              let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
+              for (const { hex, lab } of csLabs) {
                 if (used.has(hex)) continue;
-                const lab = hexToOklab(hex);
                 if (abLenSq > 0) {
                   const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
                   const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
                   if (t < -0.05 || t > 1.05) continue;
                 }
                 const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
-                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
+                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
               }
               if (bestHex) {
                 used.add(bestHex);
                 result.splice(gapIdx + 1, 0, bestHex);
+                labs.splice(gapIdx + 1, 0, bestLab);
                 inserted = true;
                 break;
               }
@@ -443,21 +449,17 @@ export default function Gradients() {
       const id = ctx.getImageData(0, 0, img.width, img.height);
       const d = id.data;
 
-      // Pre-compute OKLab + linear RGB for each available color (shelf + gradient).
-      const toLinear = (c: number) => {
-        const v = c / 255;
-        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-      };
-      const pool = colorSpace.map((hex) => {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        return { lab: hexToOklab(hex), r, g, b };
-      });
+      const pool = colorSpace.map((hex) => ({
+        lab: hexToOklab(hex),
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+      }));
+      if (pool.length === 0) return;
       const THRESHOLD_SQ = 0.20 * 0.20;
 
       for (let i = 0; i < d.length; i += 4) {
-        const lr = toLinear(d[i]), lg = toLinear(d[i + 1]), lb = toLinear(d[i + 2]);
+        const lr = srgbToLinear(d[i]), lg = srgbToLinear(d[i + 1]), lb = srgbToLinear(d[i + 2]);
         const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
         const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
         const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
