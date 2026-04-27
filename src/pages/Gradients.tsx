@@ -229,33 +229,41 @@ export default function Gradients() {
           return result;
         }
 
+        if (prev.length >= 2) {
+          // Non-DMC: bisect the largest OKLab gap each step so the sequence
+          // stays perceptually equidistant as colors are added.
+          let result = [...prev];
+          const used = new Set(result);
+          for (let step = 0; step < toAdd; step++) {
+            const labs = result.map(hexToOklab);
+            let maxDistSq = 0, gapIdx = 0;
+            for (let i = 0; i < result.length - 1; i++) {
+              const a = labs[i], b = labs[i + 1];
+              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
+              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+            }
+            const a = labs[gapIdx], b = labs[gapIdx + 1];
+            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            let bestHex: string | null = null, bestDistSq = Infinity;
+            for (const hex of colorSpace) {
+              if (used.has(hex)) continue;
+              const lab = hexToOklab(hex);
+              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
+            }
+            if (!bestHex) break;
+            used.add(bestHex);
+            result.splice(gapIdx + 1, 0, bestHex);
+          }
+          return result;
+        }
+
         const shelf = colorSpace.filter((h) => !prev.includes(h));
         if (shelf.length === 0) return prev;
         const allSorted = buildSorted(colorSpace);
-        let candidatePool: string[];
-        if (prev.length >= 2) {
-          const firstHex = prev[0];
-          const lastHex = prev[prev.length - 1];
-          const between = gradientBetween(colorSpace, firstHex, lastHex, sortMode, perpOpts)
-            .filter((h) => shelf.includes(h));
-          candidatePool = between.length > 0 ? between : allSorted.filter((h) => shelf.includes(h));
-        } else {
-          candidatePool = allSorted.filter((h) => shelf.includes(h));
-        }
-        const candidates = candidatePool.slice(0, toAdd);
+        const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
         if (candidates.length === 0) return prev;
-        const combined = [...prev, ...candidates];
-        const isReversed = prev.length >= 2 &&
-          allSorted.indexOf(prev[prev.length - 1]) < allSorted.indexOf(prev[0]);
-        combined.sort((a, b) => {
-          const ai = allSorted.indexOf(a);
-          const bi = allSorted.indexOf(b);
-          if (ai === -1 && bi === -1) return 0;
-          if (ai === -1) return 1;
-          if (bi === -1) return -1;
-          return isReversed ? bi - ai : ai - bi;
-        });
-        return combined;
+        return [...prev, ...candidates];
       } else {
         const pinned = prev.filter((h) => pinnedHexes.includes(h));
         const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
