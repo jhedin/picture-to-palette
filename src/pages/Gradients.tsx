@@ -273,13 +273,6 @@ export default function Gradients() {
     }
   }
 
-  function handleExpandShades() {
-    const expanded = expandDmcPalette(dmcPool, 1);
-    const existingIds = new Set(dmcPool.map((d) => d.id));
-    const newShades = expanded.filter((d) => !existingIds.has(d.id));
-    if (newShades.length > 0) setDmcShades((prev) => [...prev, ...newShades]);
-  }
-
   // ── dnd-kit ──────────────────────────────────────────────────────────────
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -306,6 +299,19 @@ export default function Gradients() {
         return next;
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
+    } else if (overIdStr === "trash-zone") {
+      if (activeIdStr.startsWith("shelf:")) {
+        // Shelf item dragged to trash — remove from dmcSet permanently.
+        const hex = activeIdStr.slice(6);
+        if (isDmcMode) {
+          const dmc = dmcPool.find((d) => d.hex === hex);
+          if (dmc) dispatch({ type: "REMOVE_DMC", id: dmc.id });
+        }
+      } else {
+        // Gradient chip dragged to trash — remove from gradient.
+        setSequence((prev) => prev.filter((h) => h !== activeIdStr));
+        setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
+      }
     } else if (overIdStr === "shelf-drop-zone") {
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
@@ -393,6 +399,7 @@ export default function Gradients() {
   }
 
   const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
+  const { setNodeRef: setTrashRef, isOver: isOverTrash } = useDroppable({ id: "trash-zone" });
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
@@ -768,10 +775,31 @@ export default function Gradients() {
               Add to shelf
             </IonButton>
           )}
+          {/* ── Trash zone (DMC mode) ─────────────────────────────────── */}
           {isDmcMode && (
-            <IonButton fill="outline" expand="block" onClick={handleExpandShades} style={{ marginBottom: 8 }}>
-              Expand shades
-            </IonButton>
+            <div
+              ref={setTrashRef}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                padding: "10px 16px",
+                marginBottom: 12,
+                borderRadius: 8,
+                border: isOverTrash
+                  ? "2px dashed var(--ion-color-danger)"
+                  : "2px dashed rgba(128,128,128,0.3)",
+                background: isOverTrash ? "rgba(var(--ion-color-danger-rgb),0.08)" : "transparent",
+                transition: "background 0.15s, border-color 0.15s",
+                color: isOverTrash ? "var(--ion-color-danger)" : "var(--ion-color-medium)",
+                fontSize: 13,
+                cursor: "default",
+                userSelect: "none",
+              }}
+            >
+              🗑 Drop here to delete from gradient or collection
+            </div>
           )}
 
           <DragOverlay>
