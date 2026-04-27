@@ -230,30 +230,48 @@ export default function Gradients() {
         }
 
         if (prev.length >= 2) {
-          // Non-DMC: bisect the largest OKLab gap each step so the sequence
-          // stays perceptually equidistant as colors are added.
+          // Non-DMC: bisect the largest OKLab gap each step, restricted to
+          // colors that project within the current sequence endpoints (t ∈ [0,1]).
+          // This prevents colors "outside" the pinned endpoints from sneaking in.
           let result = [...prev];
           const used = new Set(result);
+          const endA = hexToOklab(result[0]);
+          const endB = hexToOklab(result[result.length - 1]);
+          const ab = { L: endB.L - endA.L, a: endB.a - endA.a, b: endB.b - endA.b };
+          const abLenSq = ab.L ** 2 + ab.a ** 2 + ab.b ** 2;
+
           for (let step = 0; step < toAdd; step++) {
             const labs = result.map(hexToOklab);
-            let maxDistSq = 0, gapIdx = 0;
-            for (let i = 0; i < result.length - 1; i++) {
+            // Sort gaps largest-first so we can try the next if the biggest has no valid candidate.
+            const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
               const a = labs[i], b = labs[i + 1];
-              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
-              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+              return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
+            }).sort((x, y) => y.dSq - x.dSq);
+
+            let inserted = false;
+            for (const { i: gapIdx } of gaps) {
+              const a = labs[gapIdx], b = labs[gapIdx + 1];
+              const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+              let bestHex: string | null = null, bestDistSq = Infinity;
+              for (const hex of colorSpace) {
+                if (used.has(hex)) continue;
+                const lab = hexToOklab(hex);
+                if (abLenSq > 0) {
+                  const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
+                  const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+                  if (t < -0.05 || t > 1.05) continue;
+                }
+                const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
+              }
+              if (bestHex) {
+                used.add(bestHex);
+                result.splice(gapIdx + 1, 0, bestHex);
+                inserted = true;
+                break;
+              }
             }
-            const a = labs[gapIdx], b = labs[gapIdx + 1];
-            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-            let bestHex: string | null = null, bestDistSq = Infinity;
-            for (const hex of colorSpace) {
-              if (used.has(hex)) continue;
-              const lab = hexToOklab(hex);
-              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
-              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
-            }
-            if (!bestHex) break;
-            used.add(bestHex);
-            result.splice(gapIdx + 1, 0, bestHex);
+            if (!inserted) break;
           }
           return result;
         }
