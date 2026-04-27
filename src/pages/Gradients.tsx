@@ -222,9 +222,38 @@ export default function Gradients() {
             const a = labs[gapIdx], b = labs[gapIdx + 1];
             const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
             const match = nearestUnusedDmc(ideal, used, prefSet);
-            if (!match) break;
-            used.add(match.hex);
-            result.splice(gapIdx + 1, 0, match.hex);
+            const fillHex = match ? match.hex : "#000000";
+            if (match) used.add(fillHex);
+            result.splice(gapIdx + 1, 0, fillHex);
+          }
+          return result;
+        }
+
+        if (prev.length >= 2) {
+          // Non-DMC: bisect the largest OKLab gap each step so the sequence
+          // stays perceptually equidistant as colors are added.
+          let result = [...prev];
+          const used = new Set(result);
+          for (let step = 0; step < toAdd; step++) {
+            const labs = result.map(hexToOklab);
+            let maxDistSq = 0, gapIdx = 0;
+            for (let i = 0; i < result.length - 1; i++) {
+              const a = labs[i], b = labs[i + 1];
+              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
+              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+            }
+            const a = labs[gapIdx], b = labs[gapIdx + 1];
+            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            let bestHex: string | null = null, bestDistSq = Infinity;
+            for (const hex of colorSpace) {
+              if (used.has(hex)) continue;
+              const lab = hexToOklab(hex);
+              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
+            }
+            if (!bestHex) break;
+            used.add(bestHex);
+            result.splice(gapIdx + 1, 0, bestHex);
           }
           return result;
         }
@@ -232,30 +261,9 @@ export default function Gradients() {
         const shelf = colorSpace.filter((h) => !prev.includes(h));
         if (shelf.length === 0) return prev;
         const allSorted = buildSorted(colorSpace);
-        let candidatePool: string[];
-        if (prev.length >= 2) {
-          const firstHex = prev[0];
-          const lastHex = prev[prev.length - 1];
-          const between = gradientBetween(colorSpace, firstHex, lastHex, sortMode, perpOpts)
-            .filter((h) => shelf.includes(h));
-          candidatePool = between.length > 0 ? between : allSorted.filter((h) => shelf.includes(h));
-        } else {
-          candidatePool = allSorted.filter((h) => shelf.includes(h));
-        }
-        const candidates = candidatePool.slice(0, toAdd);
+        const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
         if (candidates.length === 0) return prev;
-        const combined = [...prev, ...candidates];
-        const isReversed = prev.length >= 2 &&
-          allSorted.indexOf(prev[prev.length - 1]) < allSorted.indexOf(prev[0]);
-        combined.sort((a, b) => {
-          const ai = allSorted.indexOf(a);
-          const bi = allSorted.indexOf(b);
-          if (ai === -1 && bi === -1) return 0;
-          if (ai === -1) return 1;
-          if (bi === -1) return -1;
-          return isReversed ? bi - ai : ai - bi;
-        });
-        return combined;
+        return [...prev, ...candidates];
       } else {
         const pinned = prev.filter((h) => pinnedHexes.includes(h));
         const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
@@ -271,13 +279,6 @@ export default function Gradients() {
       const dmc = dmcPool.find((d) => d.hex === hex);
       if (dmc) dispatch({ type: "ADD_DMC", color: dmc });
     }
-  }
-
-  function handleExpandShades() {
-    const expanded = expandDmcPalette(dmcPool, 1);
-    const existingIds = new Set(dmcPool.map((d) => d.id));
-    const newShades = expanded.filter((d) => !existingIds.has(d.id));
-    if (newShades.length > 0) setDmcShades((prev) => [...prev, ...newShades]);
   }
 
   // ── dnd-kit ──────────────────────────────────────────────────────────────
@@ -306,6 +307,19 @@ export default function Gradients() {
         return next;
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
+    } else if (overIdStr === "trash-zone") {
+      if (activeIdStr.startsWith("shelf:")) {
+        // Shelf item dragged to trash — remove from dmcSet permanently.
+        const hex = activeIdStr.slice(6);
+        if (isDmcMode) {
+          const dmc = dmcPool.find((d) => d.hex === hex);
+          if (dmc) dispatch({ type: "REMOVE_DMC", id: dmc.id });
+        }
+      } else {
+        // Gradient chip dragged to trash — remove from gradient.
+        setSequence((prev) => prev.filter((h) => h !== activeIdStr));
+        setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
+      }
     } else if (overIdStr === "shelf-drop-zone") {
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
@@ -392,7 +406,67 @@ export default function Gradients() {
     setSelectedSeqHex(candidate);
   }
 
+  const [processedThumb, setProcessedThumb] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isDmcMode || !state.captureThumb || colorSpace.length === 0) {
+      setProcessedThumb(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const id = ctx.getImageData(0, 0, img.width, img.height);
+      const d = id.data;
+
+      // Pre-compute OKLab + linear RGB for each available color (shelf + gradient).
+      const toLinear = (c: number) => {
+        const v = c / 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      const pool = colorSpace.map((hex) => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return { lab: hexToOklab(hex), r, g, b };
+      });
+      const THRESHOLD_SQ = 0.20 * 0.20;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const lr = toLinear(d[i]), lg = toLinear(d[i + 1]), lb = toLinear(d[i + 2]);
+        const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+        const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+        const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+        const pL = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+        const pa = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+        const pb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+
+        let minDistSq = Infinity, best = pool[0];
+        for (const entry of pool) {
+          const dSq = (pL - entry.lab.L) ** 2 + (pa - entry.lab.a) ** 2 + (pb - entry.lab.b) ** 2;
+          if (dSq < minDistSq) { minDistSq = dSq; best = entry; }
+        }
+        if (minDistSq <= THRESHOLD_SQ) {
+          d[i] = best.r; d[i + 1] = best.g; d[i + 2] = best.b;
+        } else {
+          d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+        }
+      }
+
+      ctx.putImageData(id, 0, 0);
+      if (!cancelled) setProcessedThumb(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.src = state.captureThumb;
+    return () => { cancelled = true; };
+  }, [isDmcMode, state.captureThumb, colorSpace]);
   const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
+  const { setNodeRef: setTrashRef, isOver: isOverTrash } = useDroppable({ id: "trash-zone" });
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
@@ -451,6 +525,22 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
+          {/* ── Capture preview (DMC mode) ───────────────────────────── */}
+          {isDmcMode && processedThumb && (
+            <img
+              src={processedThumb}
+              alt="Capture preview posterized to current palette"
+              style={{
+                width: "100%",
+                maxHeight: 180,
+                objectFit: "contain",
+                borderRadius: 8,
+                marginBottom: 12,
+                display: "block",
+              }}
+            />
+          )}
+
           {/* ── Mode selector ─────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {(isDmcMode ? DMC_MODES : MODES).map((m) => (
@@ -768,10 +858,31 @@ export default function Gradients() {
               Add to shelf
             </IonButton>
           )}
+          {/* ── Trash zone (DMC mode) ─────────────────────────────────── */}
           {isDmcMode && (
-            <IonButton fill="outline" expand="block" onClick={handleExpandShades} style={{ marginBottom: 8 }}>
-              Expand shades
-            </IonButton>
+            <div
+              ref={setTrashRef}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                padding: "10px 16px",
+                marginBottom: 12,
+                borderRadius: 8,
+                border: isOverTrash
+                  ? "2px dashed var(--ion-color-danger)"
+                  : "2px dashed rgba(128,128,128,0.3)",
+                background: isOverTrash ? "rgba(var(--ion-color-danger-rgb),0.08)" : "transparent",
+                transition: "background 0.15s, border-color 0.15s",
+                color: isOverTrash ? "var(--ion-color-danger)" : "var(--ion-color-medium)",
+                fontSize: 13,
+                cursor: "default",
+                userSelect: "none",
+              }}
+            >
+              🗑 Drop here to delete from gradient or collection
+            </div>
           )}
 
           <DragOverlay>

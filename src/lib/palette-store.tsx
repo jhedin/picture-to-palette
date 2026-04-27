@@ -20,6 +20,7 @@ export interface PaletteState {
   anchorA: string | null;
   anchorB: string | null;
   dmcSet: DmcColor[];
+  captureThumb: string | null;
 }
 
 export type PaletteAction =
@@ -29,6 +30,7 @@ export type PaletteAction =
   | { type: "SET_DMC_SET"; colors: DmcColor[] }
   | { type: "ADD_DMC"; color: DmcColor }
   | { type: "REMOVE_DMC"; id: string }
+  | { type: "SET_CAPTURE_THUMB"; dataUrl: string }
   | { type: "RESET" };
 
 const DEDUP_THRESHOLD = 3;
@@ -40,7 +42,7 @@ function makeId(): string {
 }
 
 export function initialPaletteState(): PaletteState {
-  return { colors: [], anchorA: null, anchorB: null, dmcSet: [] };
+  return { colors: [], anchorA: null, anchorB: null, dmcSet: [], captureThumb: null };
 }
 
 export function paletteReducer(
@@ -106,6 +108,9 @@ export function paletteReducer(
 
     case "REMOVE_DMC":
       return { ...state, dmcSet: state.dmcSet.filter((d) => d.id !== action.id) };
+
+    case "SET_CAPTURE_THUMB":
+      return { ...state, captureThumb: action.dataUrl };
 
     case "RESET":
       return initialPaletteState();
