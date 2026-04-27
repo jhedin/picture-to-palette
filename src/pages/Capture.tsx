@@ -72,6 +72,16 @@ export default function Capture() {
       const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
       imageDataRef.current = imageData;
 
+      // Store a small thumbnail so other pages (e.g. DMC Gradients) can show a preview.
+      const maxDim = 400;
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const tc = document.createElement("canvas");
+      tc.width = Math.round(bitmap.width * scale);
+      tc.height = Math.round(bitmap.height * scale);
+      const tctx = tc.getContext("2d")!;
+      tctx.drawImage(bitmap, 0, 0, tc.width, tc.height);
+      dispatch({ type: "SET_CAPTURE_THUMB", dataUrl: tc.toDataURL("image/jpeg", 0.6) });
+
       const suggestion = suggestCrop(imageData);
       setCropBox(suggestion);
       setStatus("cropping");

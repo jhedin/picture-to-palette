@@ -222,9 +222,9 @@ export default function Gradients() {
             const a = labs[gapIdx], b = labs[gapIdx + 1];
             const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
             const match = nearestUnusedDmc(ideal, used, prefSet);
-            if (!match) break;
-            used.add(match.hex);
-            result.splice(gapIdx + 1, 0, match.hex);
+            const fillHex = match ? match.hex : "#000000";
+            if (match) used.add(fillHex);
+            result.splice(gapIdx + 1, 0, fillHex);
           }
           return result;
         }
@@ -458,6 +458,22 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
+          {/* ── Capture preview (DMC mode) ───────────────────────────── */}
+          {isDmcMode && state.captureThumb && (
+            <img
+              src={state.captureThumb}
+              alt="Capture preview"
+              style={{
+                width: "100%",
+                maxHeight: 180,
+                objectFit: "contain",
+                borderRadius: 8,
+                marginBottom: 12,
+                display: "block",
+              }}
+            />
+          )}
+
           {/* ── Mode selector ─────────────────────────────────────────── */}
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {(isDmcMode ? DMC_MODES : MODES).map((m) => (
