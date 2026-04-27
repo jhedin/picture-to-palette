@@ -398,6 +398,65 @@ export default function Gradients() {
     setSelectedSeqHex(candidate);
   }
 
+  const [processedThumb, setProcessedThumb] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isDmcMode || !state.captureThumb || colorSpace.length === 0) {
+      setProcessedThumb(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const id = ctx.getImageData(0, 0, img.width, img.height);
+      const d = id.data;
+
+      // Pre-compute OKLab + linear RGB for each available color (shelf + gradient).
+      const toLinear = (c: number) => {
+        const v = c / 255;
+        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      const pool = colorSpace.map((hex) => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return { lab: hexToOklab(hex), r, g, b };
+      });
+      const THRESHOLD_SQ = 0.20 * 0.20;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const lr = toLinear(d[i]), lg = toLinear(d[i + 1]), lb = toLinear(d[i + 2]);
+        const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+        const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+        const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+        const pL = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+        const pa = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+        const pb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+
+        let minDistSq = Infinity, best = pool[0];
+        for (const entry of pool) {
+          const dSq = (pL - entry.lab.L) ** 2 + (pa - entry.lab.a) ** 2 + (pb - entry.lab.b) ** 2;
+          if (dSq < minDistSq) { minDistSq = dSq; best = entry; }
+        }
+        if (minDistSq <= THRESHOLD_SQ) {
+          d[i] = best.r; d[i + 1] = best.g; d[i + 2] = best.b;
+        } else {
+          d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+        }
+      }
+
+      ctx.putImageData(id, 0, 0);
+      if (!cancelled) setProcessedThumb(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.src = state.captureThumb;
+    return () => { cancelled = true; };
+  }, [isDmcMode, state.captureThumb, colorSpace]);
   const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
   const { setNodeRef: setTrashRef, isOver: isOverTrash } = useDroppable({ id: "trash-zone" });
 
@@ -459,10 +518,10 @@ export default function Gradients() {
           onDragEnd={handleDragEnd}
         >
           {/* ── Capture preview (DMC mode) ───────────────────────────── */}
-          {isDmcMode && state.captureThumb && (
+          {isDmcMode && processedThumb && (
             <img
-              src={state.captureThumb}
-              alt="Capture preview"
+              src={processedThumb}
+              alt="Capture preview posterized to current palette"
               style={{
                 width: "100%",
                 maxHeight: 180,
