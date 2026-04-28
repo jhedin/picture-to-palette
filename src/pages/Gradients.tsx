@@ -17,6 +17,7 @@ import {
   PointerSensor,
   closestCenter,
   pointerWithin,
+  rectIntersection,
   useDraggable,
   useDroppable,
   useSensor,
@@ -269,16 +270,19 @@ export default function Gradients() {
             let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
             for (const { hex, lab } of csLabs) {
               if (used.has(hex)) continue;
+              let perpSq = 0;
               if (abLenSq > 0) {
                 const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
                 const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
                 if (t < -0.05 || t > 1.05) continue;
                 // Perpendicular corridor filter — same as gradientBetween.
                 const apLenSq = ap.L ** 2 + ap.a ** 2 + ap.b ** 2;
-                const perpSq = Math.max(0, apLenSq - t * t * abLenSq);
+                perpSq = Math.max(0, apLenSq - t * t * abLenSq);
                 if (perpSq > maxPerpSq) continue;
               }
-              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+              // Combine midpoint distance with perp penalty so on-line colors
+              // beat off-line ones even when slightly farther from the midpoint.
+              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2 + perpSq;
               if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
             }
             if (bestHex) {
@@ -349,12 +353,23 @@ export default function Gradients() {
   }
 
   // ── dnd-kit ──────────────────────────────────────────────────────────────
-  // pointerWithin fires when the pointer is physically inside a droppable rect,
-  // which lets the shelf-drop-zone win over distant sortable sequence chips.
+  // Named drop zones need to beat nearby sortable chips.
+  // 1. pointerWithin: exact pointer position — fires when pointer is inside any droppable
+  // 2. rectIntersection on named zones: tolerant overlap check for the drag overlay rect
+  // 3. closestCenter: fallback for sortable reordering
+  const NAMED_ZONES = new Set(["shelf-drop-zone", "trash-zone", "shadow-zone", "highlight-zone"]);
   const collisionDetection = useCallback(
     (args: Parameters<typeof closestCenter>[0]) => {
       const within = pointerWithin(args);
-      return within.length > 0 ? within : closestCenter(args);
+      if (within.length > 0) {
+        // Named zones always beat sortable chips even when both contain the pointer.
+        const namedFirst = within.find((c) => NAMED_ZONES.has(String(c.id)));
+        return namedFirst ? [namedFirst] : within;
+      }
+      const intersecting = rectIntersection(args);
+      const namedZone = intersecting.find((c) => NAMED_ZONES.has(String(c.id)));
+      if (namedZone) return [namedZone];
+      return closestCenter(args);
     },
     [],
   );
@@ -971,6 +986,21 @@ export default function Gradients() {
                       </button>
                       <button
                         type="button"
+                        aria-label="Remove from gradient"
+                        title="Remove from gradient"
+                        onClick={() => {
+                          const hex = selectedSeqHex;
+                          setSequence((prev) => prev.filter((h) => h !== hex));
+                          setPinnedHexes((prev) => prev.filter((h) => h !== hex));
+                          setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== hex).length), prev - 1));
+                          setSelectedSeqHex(null);
+                        }}
+                        style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: "var(--ion-color-danger)", lineHeight: 1, padding: "0 2px" }}
+                      >
+                        🗑
+                      </button>
+                      <button
+                        type="button"
                         aria-label="Close panel"
                         onClick={() => setSelectedSeqHex(null)}
                         style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--ion-color-medium)", lineHeight: 1, padding: "0 2px" }}
@@ -1025,25 +1055,22 @@ export default function Gradients() {
 
           {/* ── Shelf ─────────────────────────────────────────────────── */}
           {(shelf.length > 0 || (activeId && !activeId.startsWith("shelf:"))) && (
-            <>
-              <p style={{ margin: "12px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+            // The ref covers the label + chips so the whole section is the drop zone.
+            <div
+              ref={setShelfDropRef}
+              style={{
+                marginBottom: 16,
+                borderRadius: 8,
+                padding: 4,
+                background: isOverShelf ? "rgba(var(--ion-color-primary-rgb), 0.15)" : "transparent",
+                border: isOverShelf ? "2px dashed var(--ion-color-primary)" : (activeId && !activeId.startsWith("shelf:") ? "2px dashed rgba(128,128,128,0.3)" : "2px solid transparent"),
+                transition: "background 0.15s, border-color 0.15s",
+              }}
+            >
+              <p style={{ margin: "4px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
                 {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position or back here to remove, tap to add
               </p>
-              <div
-                ref={setShelfDropRef}
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  marginBottom: 16,
-                  minHeight: 52,
-                  borderRadius: 8,
-                  padding: 4,
-                  background: isOverShelf ? "rgba(var(--ion-color-primary-rgb), 0.15)" : "transparent",
-                  border: isOverShelf ? "2px dashed var(--ion-color-primary)" : (activeId && !activeId.startsWith("shelf:") ? "2px dashed rgba(128,128,128,0.3)" : "2px solid transparent"),
-                  transition: "background 0.15s, border-color 0.15s",
-                }}
-              >
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 44 }}>
                 {shelf.map((hex) => {
                   const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
                   return (
@@ -1064,7 +1091,7 @@ export default function Gradients() {
                   </span>
                 )}
               </div>
-            </>
+            </div>
           )}
 
           {/* ── DMC actions ───────────────────────────────────────────── */}
