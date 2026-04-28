@@ -7,6 +7,7 @@ import {
   IonHeader,
   IonPage,
   IonProgressBar,
+  IonSpinner,
   IonText,
   IonTitle,
   IonToast,
@@ -233,10 +234,10 @@ export default function Capture() {
               </p>
             </IonText>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <IonButton onClick={() => runExtraction(cropBox)}>
-                Extract colors
+              <IonButton onClick={() => runExtraction(cropBox)} disabled={status === "extracting"}>
+                {status === "extracting" ? <IonSpinner name="crescent" /> : "Extract colors"}
               </IonButton>
-              <IonButton fill="outline" onClick={() => runExtraction({ x: 0, y: 0, w: 1, h: 1 })}>
+              <IonButton fill="outline" onClick={() => runExtraction({ x: 0, y: 0, w: 1, h: 1 })} disabled={status === "extracting"}>
                 Use full image
               </IonButton>
             </div>
@@ -256,8 +257,8 @@ export default function Capture() {
           {showSettings && (
             <div style={{ padding: "8px 0 4px", display: "flex", flexDirection: "column", gap: 12 }}>
               {status === "ready" && (
-                <IonButton size="small" onClick={() => runExtraction(cropBox)} style={{ alignSelf: "flex-start" }}>
-                  Re-extract with these settings
+                <IonButton size="small" onClick={() => runExtraction(cropBox)} disabled={status === "extracting"} style={{ alignSelf: "flex-start" }}>
+                  {status === "extracting" ? <IonSpinner name="crescent" /> : "Re-extract with these settings"}
                 </IonButton>
               )}
               <ExtractionSlider
