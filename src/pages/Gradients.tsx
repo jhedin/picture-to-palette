@@ -503,7 +503,7 @@ export default function Gradients() {
     const allDmcHexes = DMC_COLORS.map((d) => d.hex);
     const { shadows } = shadeRamp(allDmcHexes, sequence[0], 1);
     if (shadows.length === 0) return;
-    const hex = shadows[0]; // darkest-first, so [0] is the new shadow step
+    const hex = shadows[0];
     if (sequence.includes(hex)) return;
     setSequence((prev) => [hex, ...prev]);
   }
@@ -513,7 +513,7 @@ export default function Gradients() {
     const allDmcHexes = DMC_COLORS.map((d) => d.hex);
     const { highlights } = shadeRamp(allDmcHexes, sequence[sequence.length - 1], 1);
     if (highlights.length === 0) return;
-    const hex = highlights[highlights.length - 1]; // push returns lightest-last
+    const hex = highlights[highlights.length - 1];
     if (sequence.includes(hex)) return;
     setSequence((prev) => [...prev, hex]);
   }
