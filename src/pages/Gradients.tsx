@@ -210,15 +210,18 @@ export default function Gradients() {
     const effective = Math.max(n, pinnedHexes.length);
     setMaxColors(effective);
     setSequence((prev) => {
-      if (effective >= prev.length) {
-        const toAdd = effective - prev.length;
-        if (toAdd <= 0) return prev;
+      // When 2+ pinned colors exist, always recompute from the pinned subset.
+      // This makes the slider deterministic: the same count + same pins always
+      // produces the same sequence regardless of how the slider was moved.
+      const pinned = prev.filter((h) => pinnedHexes.includes(h));
 
-        if (isDmcMode && prev.length >= 2) {
-          // DMC mode: fill the largest perceptual gap with the nearest unused DMC thread,
-          // preferring already-matched threads before pulling from the full library.
+      if (pinned.length >= 2) {
+        const toAdd = effective - pinned.length;
+        if (toAdd <= 0) return pinned;
+
+        if (isDmcMode) {
           const prefSet = new Set(dmcSet.map((d) => d.hex));
-          let result = [...prev];
+          let result = [...pinned];
           const used = new Set(result);
           for (let step = 0; step < toAdd; step++) {
             const labs = result.map(hexToOklab);
@@ -238,90 +241,87 @@ export default function Gradients() {
           return result;
         }
 
-        if (prev.length >= 2) {
-          // Non-DMC: bisect the largest OKLab gap each step, restricted to
-          // colors that project within the current sequence endpoints (t ∈ [0,1]).
-          // This prevents colors "outside" the pinned endpoints from sneaking in.
-          let result = [...prev];
-          const used = new Set(result);
-          const endA = hexToOklab(result[0]);
-          const endB = hexToOklab(result[result.length - 1]);
-          const ab = { L: endB.L - endA.L, a: endB.a - endA.a, b: endB.b - endA.b };
-          const abLenSq = ab.L ** 2 + ab.a ** 2 + ab.b ** 2;
-          // Pre-compute OKLab entries for colorSpace candidates (t-filter + distance).
-          const csLabs = colorSpace.map((hex) => ({ hex, lab: hexToOklab(hex) }));
-          // Cache labs array and splice in new entries rather than recomputing each step.
-          let labs = result.map(hexToOklab);
-
-          for (let step = 0; step < toAdd; step++) {
-            const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
-              const a = labs[i], b = labs[i + 1];
-              return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
-            }).sort((x, y) => y.dSq - x.dSq);
-
-            let inserted = false;
-            for (const { i: gapIdx } of gaps) {
-              const a = labs[gapIdx], b = labs[gapIdx + 1];
-              const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-              let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
-              for (const { hex, lab } of csLabs) {
-                if (used.has(hex)) continue;
-                if (abLenSq > 0) {
-                  const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
-                  const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-                  if (t < -0.05 || t > 1.05) continue;
-                }
-                const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
-                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
-              }
-              if (bestHex) {
-                used.add(bestHex);
-                result.splice(gapIdx + 1, 0, bestHex);
-                labs.splice(gapIdx + 1, 0, bestLab);
-                inserted = true;
-                break;
-              }
-            }
-            if (!inserted) break;
-          }
-          return result;
-        }
-
-        const shelf = colorSpace.filter((h) => !prev.includes(h));
-        if (shelf.length === 0) return prev;
-        const allSorted = buildSorted(colorSpace);
-        const candidates = allSorted.filter((h) => shelf.includes(h)).slice(0, toAdd);
-        if (candidates.length === 0) return prev;
-        return [...prev, ...candidates];
-      } else {
-        // Iteratively remove the most redundant non-pinned color: the one whose
-        // removal creates the smallest new gap in OKLab space (i.e., it's closest
-        // to the straight line between its neighbors). Outliers have large neighbor
-        // distances that vanish when they're removed, so they get evicted first.
-        let result = [...prev];
+        // Non-DMC: gap-fill from pinned with t-projection + perp corridor filter.
+        // Applying the same perpendicular filter as gradientBetween prevents
+        // off-line colors from winning over better on-line candidates.
+        let result = [...pinned];
+        const used = new Set(result);
+        const endA = hexToOklab(result[0]);
+        const endB = hexToOklab(result[result.length - 1]);
+        const ab = { L: endB.L - endA.L, a: endB.a - endA.a, b: endB.b - endA.b };
+        const abLenSq = ab.L ** 2 + ab.a ** 2 + ab.b ** 2;
+        const abLen = Math.sqrt(abLenSq);
+        const maxPerp = abLen > 0 ? Math.min(perpRel * abLen, perpCap) : Infinity;
+        const maxPerpSq = maxPerp * maxPerp;
+        const csLabs = colorSpace.map((hex) => ({ hex, lab: hexToOklab(hex) }));
         let labs = result.map(hexToOklab);
-        while (result.length > effective) {
-          let bestIdx = -1;
-          let bestGapSq = Infinity;
-          for (let i = 0; i < result.length; i++) {
-            if (pinnedHexes.includes(result[i])) continue;
-            const lLab = i > 0 ? labs[i - 1] : null;
-            const rLab = i < result.length - 1 ? labs[i + 1] : null;
-            let gapSq: number;
-            if (lLab && rLab) {
-              gapSq = (lLab.L - rLab.L) ** 2 + (lLab.a - rLab.a) ** 2 + (lLab.b - rLab.b) ** 2;
-            } else {
-              const nb = lLab ?? rLab!;
-              gapSq = (labs[i].L - nb.L) ** 2 + (labs[i].a - nb.a) ** 2 + (labs[i].b - nb.b) ** 2;
+
+        for (let step = 0; step < toAdd; step++) {
+          const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
+            const a = labs[i], b = labs[i + 1];
+            return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
+          }).sort((x, y) => y.dSq - x.dSq);
+          let inserted = false;
+          for (const { i: gapIdx } of gaps) {
+            const a = labs[gapIdx], b = labs[gapIdx + 1];
+            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
+            for (const { hex, lab } of csLabs) {
+              if (used.has(hex)) continue;
+              if (abLenSq > 0) {
+                const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
+                const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+                if (t < -0.05 || t > 1.05) continue;
+                // Perpendicular corridor filter — same as gradientBetween.
+                const apLenSq = ap.L ** 2 + ap.a ** 2 + ap.b ** 2;
+                const perpSq = Math.max(0, apLenSq - t * t * abLenSq);
+                if (perpSq > maxPerpSq) continue;
+              }
+              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
             }
-            if (gapSq < bestGapSq) { bestGapSq = gapSq; bestIdx = i; }
+            if (bestHex) {
+              used.add(bestHex);
+              result.splice(gapIdx + 1, 0, bestHex);
+              labs.splice(gapIdx + 1, 0, bestLab);
+              inserted = true;
+              break;
+            }
           }
-          if (bestIdx === -1) break;
-          result.splice(bestIdx, 1);
-          labs.splice(bestIdx, 1);
+          if (!inserted) break;
         }
         return result;
       }
+
+      // Fewer than 2 pins — fall back to incremental on prev.
+      if (effective >= prev.length) {
+        const toAdd = effective - prev.length;
+        if (toAdd <= 0) return prev;
+        const shelf = colorSpace.filter((h) => !prev.includes(h));
+        if (shelf.length === 0) return prev;
+        const candidates = buildSorted(colorSpace).filter((h) => shelf.includes(h)).slice(0, toAdd);
+        return candidates.length === 0 ? prev : [...prev, ...candidates];
+      }
+      // Shrink without enough pins: min-gap removal.
+      let result = [...prev];
+      let labs = result.map(hexToOklab);
+      while (result.length > effective) {
+        let bestIdx = -1, bestGapSq = Infinity;
+        for (let i = 0; i < result.length; i++) {
+          if (pinnedHexes.includes(result[i])) continue;
+          const lLab = i > 0 ? labs[i - 1] : null;
+          const rLab = i < result.length - 1 ? labs[i + 1] : null;
+          const nb = lLab ?? rLab!;
+          const gapSq = (lLab && rLab)
+            ? (lLab.L-rLab.L)**2 + (lLab.a-rLab.a)**2 + (lLab.b-rLab.b)**2
+            : (labs[i].L-nb.L)**2 + (labs[i].a-nb.a)**2 + (labs[i].b-nb.b)**2;
+          if (gapSq < bestGapSq) { bestGapSq = gapSq; bestIdx = i; }
+        }
+        if (bestIdx === -1) break;
+        result.splice(bestIdx, 1);
+        labs.splice(bestIdx, 1);
+      }
+      return result;
     });
   }
 
@@ -696,10 +696,20 @@ export default function Gradients() {
               {/* Threshold sliders */}
               <p style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
                 OKLab Filter Thresholds
+                {oklabAnalysis && (
+                  <span style={{ marginLeft: 8, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                    — effective: <strong>{oklabAnalysis.maxPerp.toFixed(3)}</strong>
+                    {" "}
+                    <span style={{ opacity: 0.6, fontSize: 10 }}>
+                      ({oklabAnalysis.maxPerp === perpCap ? "cap limiting" : "relative limiting"})
+                    </span>
+                  </span>
+                )}
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 12, color: "var(--ion-color-medium)", minWidth: 140, whiteSpace: "nowrap" }}>
-                  Relative threshold: <strong>{perpRel.toFixed(2)}</strong>
+                  Relative: <strong>{perpRel.toFixed(2)}</strong>
+                  {oklabAnalysis && <span style={{ opacity: 0.5, fontSize: 10 }}> ×{oklabAnalysis.abLen.toFixed(2)}={( perpRel * oklabAnalysis.abLen).toFixed(3)}</span>}
                 </span>
                 <input
                   type="range"
@@ -708,12 +718,12 @@ export default function Gradients() {
                   step={0.01}
                   value={perpRel}
                   onChange={(e) => setPerpRel(Number(e.target.value))}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, opacity: oklabAnalysis && oklabAnalysis.maxPerp < perpCap ? 1 : 0.5 }}
                 />
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <span style={{ fontSize: 12, color: "var(--ion-color-medium)", minWidth: 140, whiteSpace: "nowrap" }}>
-                  Absolute cap: <strong>{perpCap.toFixed(2)}</strong>
+                  Cap: <strong>{perpCap.toFixed(2)}</strong>
                 </span>
                 <input
                   type="range"
@@ -722,7 +732,7 @@ export default function Gradients() {
                   step={0.01}
                   value={perpCap}
                   onChange={(e) => setPerpCap(Number(e.target.value))}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, opacity: oklabAnalysis && oklabAnalysis.maxPerp === perpCap ? 1 : 0.5 }}
                 />
               </div>
               <button
