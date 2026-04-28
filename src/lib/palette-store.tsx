@@ -21,6 +21,10 @@ export interface PaletteState {
   anchorB: string | null;
   dmcSet: DmcColor[];
   captureThumb: string | null;
+  gradientSeq: string[];
+  gradientPinned: string[];
+  gradientSortMode: string;
+  gradientMaxColors: number;
 }
 
 export type PaletteAction =
@@ -31,6 +35,7 @@ export type PaletteAction =
   | { type: "ADD_DMC"; color: DmcColor }
   | { type: "REMOVE_DMC"; id: string }
   | { type: "SET_CAPTURE_THUMB"; dataUrl: string }
+  | { type: "SET_GRADIENT"; seq: string[]; pinned: string[]; sortMode: string; maxColors: number }
   | { type: "RESET" };
 
 const DEDUP_THRESHOLD = 3;
@@ -42,7 +47,10 @@ function makeId(): string {
 }
 
 export function initialPaletteState(): PaletteState {
-  return { colors: [], anchorA: null, anchorB: null, dmcSet: [], captureThumb: null };
+  return {
+    colors: [], anchorA: null, anchorB: null, dmcSet: [], captureThumb: null,
+    gradientSeq: [], gradientPinned: [], gradientSortMode: "natural", gradientMaxColors: 0,
+  };
 }
 
 export function paletteReducer(
@@ -111,6 +119,15 @@ export function paletteReducer(
 
     case "SET_CAPTURE_THUMB":
       return { ...state, captureThumb: action.dataUrl };
+
+    case "SET_GRADIENT":
+      return {
+        ...state,
+        gradientSeq: action.seq,
+        gradientPinned: action.pinned,
+        gradientSortMode: action.sortMode,
+        gradientMaxColors: action.maxColors,
+      };
 
     case "RESET":
       return initialPaletteState();
