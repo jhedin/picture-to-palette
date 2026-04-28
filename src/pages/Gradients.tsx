@@ -460,9 +460,14 @@ export default function Gradients() {
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveId(null);
     const activeIdStr = String(active.id);
-    // Use the last stable over-id as fallback — on touch, pointerup coordinates
-    // can differ from the last pointermove and miss the shelf on release.
-    const overIdStr = over ? String(over.id) : (lastOverIdRef.current ?? "");
+    // Named zones (shelf, trash, shadow, highlight) always win over whatever
+    // over reports at the release frame — a touch flinch can land the pointer
+    // on a gradient chip at the last millisecond, but if the last stable hover
+    // was a named zone we honour that intent.
+    const rawOver = over ? String(over.id) : null;
+    const overIdStr = (lastOverIdRef.current && NAMED_ZONES.has(lastOverIdRef.current))
+      ? lastOverIdRef.current
+      : (rawOver ?? lastOverIdRef.current ?? "");
     lastOverIdRef.current = null;
     if (!overIdStr) return;
     if (activeIdStr.startsWith("shelf:")) {
