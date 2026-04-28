@@ -283,8 +283,23 @@ export default function Gradients() {
             }
             if (bestHex) {
               used.add(bestHex);
-              result.splice(gapIdx + 1, 0, bestHex);
-              labs.splice(gapIdx + 1, 0, bestLab);
+              // Insert at the t-ordered position, not blindly at gapIdx+1.
+              // The nearest candidate may project outside the gap's range, so
+              // using its t-value preserves the sequence's sorted order.
+              let insertPos = result.length;
+              if (abLenSq > 0) {
+                const apb = { L: bestLab.L - endA.L, a: bestLab.a - endA.a, b: bestLab.b - endA.b };
+                const t_b = (apb.L * ab.L + apb.a * ab.a + apb.b * ab.b) / abLenSq;
+                for (let j = 0; j < labs.length; j++) {
+                  const lj = labs[j];
+                  const t_j = ((lj.L - endA.L) * ab.L + (lj.a - endA.a) * ab.a + (lj.b - endA.b) * ab.b) / abLenSq;
+                  if (t_b < t_j) { insertPos = j; break; }
+                }
+              } else {
+                insertPos = gapIdx + 1;
+              }
+              result.splice(insertPos, 0, bestHex);
+              labs.splice(insertPos, 0, bestLab);
               inserted = true;
               break;
             }
@@ -438,7 +453,35 @@ export default function Gradients() {
 
   function handleModeChange(m: GradientMode) {
     setSortMode(m);
-    setSequence((prev) => prev.length < 2 ? prev : sortWithMode(prev, m));
+    setSequence((prev) => {
+      if (prev.length < 2) return prev;
+      const first = prev[0], last = prev[prev.length - 1];
+      const numInterior = prev.length - 2;
+      // Reselect interior from colorSpace for the new mode rather than just
+      // re-sorting the same colors — the best choices differ per mode.
+      const excludeEnds = new Set([first, last]);
+      const available = colorSpace.filter((h) => !excludeEnds.has(h));
+      if (m === "natural") {
+        const between = gradientBetween(available, first, last, m, perpOpts);
+        const interior = numInterior >= between.length ? between : pickEvenly(between, numInterior);
+        return [first, ...interior, last];
+      }
+      // Non-natural: sort available by the mode's scalar in anchor direction.
+      const scalarOf = (h: string) => {
+        const lab = hexToOklab(h);
+        if (m === "lightness") return lab.L;
+        if (m === "saturation") return Math.sqrt(lab.a ** 2 + lab.b ** 2);
+        if (m === "hue") return Math.atan2(lab.b, lab.a);
+        return lab.L; // shade fallback
+      };
+      const sorted = sortWithMode(available, m);
+      const ascending = scalarOf(first) <= scalarOf(last);
+      const oriented = ascending ? sorted : [...sorted].reverse();
+      const interior = numInterior <= 0 ? []
+        : numInterior >= oriented.length ? oriented
+        : pickEvenly(oriented, numInterior);
+      return [first, ...interior, last];
+    });
     setSelectedSeqHex(null);
   }
 
@@ -1352,7 +1395,7 @@ function OklabPlane({
   maxPerp?: number;
 }) {
   const PAD = 16;
-  const SZ = 320;
+  const SZ = 360;
   const TW = SZ + PAD * 2;
   const TH = SZ + PAD * 2;
   const A_RANGE = 0.38, B_RANGE = 0.38;
