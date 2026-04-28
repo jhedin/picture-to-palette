@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IonBackButton,
   IonButton,
@@ -16,6 +16,7 @@ import {
   DragOverlay,
   PointerSensor,
   closestCenter,
+  pointerWithin,
   useDraggable,
   useDroppable,
   useSensor,
@@ -333,6 +334,16 @@ export default function Gradients() {
   }
 
   // ── dnd-kit ──────────────────────────────────────────────────────────────
+  // pointerWithin fires when the pointer is physically inside a droppable rect,
+  // which lets the shelf-drop-zone win over distant sortable sequence chips.
+  const collisionDetection = useCallback(
+    (args: Parameters<typeof closestCenter>[0]) => {
+      const within = pointerWithin(args);
+      return within.length > 0 ? within : closestCenter(args);
+    },
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
@@ -600,7 +611,7 @@ export default function Gradients() {
       <IonContent className="ion-padding">
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
@@ -969,20 +980,11 @@ export default function Gradients() {
             </>
           )}
 
-          {/* ── OKLab color space view ───────────────────────────────── */}
-          <OklabPlane
-            colorSpace={colorSpace}
-            sequence={sequence}
-            anchorAHex={oklabAnalysis?.anchorAHex}
-            anchorBHex={oklabAnalysis?.anchorBHex}
-            maxPerp={oklabAnalysis?.maxPerp}
-          />
-
           {/* ── Shelf ─────────────────────────────────────────────────── */}
           {(shelf.length > 0 || (activeId && !activeId.startsWith("shelf:"))) && (
             <>
               <p style={{ margin: "12px 0 6px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
-                {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position, tap to append & pin
+                {isDmcMode ? "Available DMC threads" : "Palette"} — drag to position or back here to remove, tap to add
               </p>
               <div
                 ref={setShelfDropRef}
@@ -994,8 +996,8 @@ export default function Gradients() {
                   minHeight: 52,
                   borderRadius: 8,
                   padding: 4,
-                  background: isOverShelf ? "rgba(var(--ion-color-primary-rgb), 0.1)" : "transparent",
-                  border: isOverShelf ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                  background: isOverShelf ? "rgba(var(--ion-color-primary-rgb), 0.15)" : "transparent",
+                  border: isOverShelf ? "2px dashed var(--ion-color-primary)" : (activeId && !activeId.startsWith("shelf:") ? "2px dashed rgba(128,128,128,0.3)" : "2px solid transparent"),
                   transition: "background 0.15s, border-color 0.15s",
                 }}
               >
@@ -1028,8 +1030,8 @@ export default function Gradients() {
               Add to shelf
             </IonButton>
           )}
-          {/* ── Trash zone ───────────────────────────────────────────── */}
-          {sequence.length > 0 && (
+          {/* ── Trash zone (DMC only — removes from collection) ─────── */}
+          {isDmcMode && sequence.length > 0 && (
             <div
               ref={setTrashRef}
               style={{
@@ -1073,6 +1075,14 @@ export default function Gradients() {
         <IonButton expand="block" onClick={handleSave} disabled={sequence.length < 2}>
           Save PNG
         </IonButton>
+
+        <OklabPlane
+          colorSpace={colorSpace}
+          sequence={sequence}
+          anchorAHex={oklabAnalysis?.anchorAHex}
+          anchorBHex={oklabAnalysis?.anchorBHex}
+          maxPerp={oklabAnalysis?.maxPerp}
+        />
 
         <IonToast
           isOpen={savedMsg !== null}
@@ -1341,8 +1351,8 @@ function OklabPlane({
   anchorBHex?: string;
   maxPerp?: number;
 }) {
-  const PAD = 14;
-  const SZ = 220;
+  const PAD = 16;
+  const SZ = 320;
   const TW = SZ + PAD * 2;
   const TH = SZ + PAD * 2;
   const A_RANGE = 0.38, B_RANGE = 0.38;
@@ -1388,73 +1398,97 @@ function OklabPlane({
     }
   }
 
+  // Render the ab-plane as actual color pixels at the median lightness of the sequence.
+  const bgL = useMemo(() => {
+    if (sequence.length === 0) return 0.65;
+    const ls = sequence.map(h => hexToOklab(h).L).sort((x, y) => x - y);
+    return ls[Math.floor(ls.length / 2)];
+  }, [sequence]);
+
+  const [bgUrl, setBgUrl] = useState("");
+  useEffect(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = SZ; canvas.height = SZ;
+    const ctx = canvas.getContext("2d")!;
+    const id = ctx.createImageData(SZ, SZ);
+    const d = id.data;
+    const srgbGamma = (v: number) => Math.round(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055));
+    for (let py = 0; py < SZ; py++) {
+      for (let px = 0; px < SZ; px++) {
+        const a = -A_RANGE + (px / (SZ - 1)) * (A_RANGE * 2);
+        const b = B_RANGE - (py / (SZ - 1)) * (B_RANGE * 2);
+        const l_ = bgL + 0.3963377774 * a + 0.2158037573 * b;
+        const m_ = bgL - 0.1055613458 * a - 0.0638541728 * b;
+        const s_ = bgL - 0.0894841775 * a - 1.2914855480 * b;
+        const l3 = l_ ** 3, m3 = m_ ** 3, s3 = s_ ** 3;
+        const R = Math.max(0, Math.min(1, +4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3));
+        const G = Math.max(0, Math.min(1, -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3));
+        const B = Math.max(0, Math.min(1, -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3));
+        const i = (py * SZ + px) * 4;
+        d[i] = srgbGamma(R); d[i+1] = srgbGamma(G); d[i+2] = srgbGamma(B); d[i+3] = 255;
+      }
+    }
+    ctx.putImageData(id, 0, 0);
+    setBgUrl(canvas.toDataURL());
+  }, [bgL]);
+
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginTop: 12, marginBottom: 12 }}>
       <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
-        OKLab color space (a/b plane)
+        OKLab color space (a/b plane, L={bgL.toFixed(2)})
       </p>
       <div style={{ overflowX: "auto" }}>
         <svg
           viewBox={`0 0 ${TW} ${TH}`}
-          style={{ width: "100%", maxWidth: TW, display: "block", borderRadius: 8, background: "#181818" }}
+          style={{ width: "100%", maxWidth: TW, display: "block", borderRadius: 8, background: "#111" }}
           aria-label="OKLab ab-plane showing colors and gradient path"
         >
+          {/* Pixel-rendered color space background */}
+          {bgUrl && <image x={PAD} y={PAD} width={SZ} height={SZ} href={bgUrl} />}
           {/* Axes */}
-          <line x1={PAD} y1={bToY(0)} x2={PAD + SZ} y2={bToY(0)} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-          <line x1={aToX(0)} y1={PAD} x2={aToX(0)} y2={PAD + SZ} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-          {/* Hue landmarks */}
-          {([
-            ["red",    0.27,  0.03],
-            ["ylw",   0.02,  0.24],
-            ["grn",  -0.16,  0.12],
-            ["teal", -0.14, -0.14],
-            ["blu",  -0.02, -0.26],
-            ["prpl",  0.22, -0.17],
-          ] as [string, number, number][]).map(([lbl, a, b]) => (
-            <text key={lbl} x={aToX(a)} y={bToY(b)} fontSize={7}
-              fill="rgba(255,255,255,0.18)" textAnchor="middle" dominantBaseline="central">{lbl}</text>
-          ))}
+          <line x1={PAD} y1={bToY(0)} x2={PAD + SZ} y2={bToY(0)} stroke="rgba(0,0,0,0.3)" strokeWidth={1} />
+          <line x1={aToX(0)} y1={PAD} x2={aToX(0)} y2={PAD + SZ} stroke="rgba(0,0,0,0.3)" strokeWidth={1} />
           {/* A→B reference */}
           {refLine}
           {/* Filter band */}
           {band}
           {/* Gradient path */}
           {sequence.length >= 2 && (
-            <polyline points={seqPts} fill="none" stroke="rgba(255,255,255,0.55)"
-              strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            <polyline points={seqPts} fill="none" stroke="rgba(255,255,255,0.7)"
+              strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
           )}
           {/* Shelf dots */}
           {colorSpace.filter(h => !seqSet.has(h) && h !== anchorAHex && h !== anchorBHex).map(h => {
             const { a, b } = hexToOklab(h);
-            return <circle key={h} cx={aToX(a)} cy={bToY(b)} r={3} fill={h} stroke="rgba(0,0,0,0.4)" strokeWidth={0.8} opacity={0.5} />;
+            return <circle key={h} cx={aToX(a)} cy={bToY(b)} r={4} fill={h} stroke="rgba(0,0,0,0.6)" strokeWidth={1} opacity={0.75} />;
           })}
           {/* Sequence dots */}
           {sequence.map((h, i) => {
             if (h === anchorAHex || h === anchorBHex) return null;
             const { a, b } = hexToOklab(h);
-            return <circle key={`seq-${i}`} cx={aToX(a)} cy={bToY(b)} r={5} fill={h} stroke="white" strokeWidth={1.5} />;
+            return <circle key={`seq-${i}`} cx={aToX(a)} cy={bToY(b)} r={6} fill={h} stroke="white" strokeWidth={2} />;
           })}
           {/* Anchor A */}
           {anchorALab && anchorAHex && (
             <g>
-              <circle cx={aToX(anchorALab.a)} cy={bToY(anchorALab.b)} r={8} fill={anchorAHex} stroke="white" strokeWidth={2} />
-              <text x={aToX(anchorALab.a)} y={bToY(anchorALab.b) + 3} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">A</text>
+              <circle cx={aToX(anchorALab.a)} cy={bToY(anchorALab.b)} r={9} fill={anchorAHex} stroke="white" strokeWidth={2.5} />
+              <text x={aToX(anchorALab.a)} y={bToY(anchorALab.b) + 3.5} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">A</text>
             </g>
           )}
           {/* Anchor B */}
           {anchorBLab && anchorBHex && (
             <g>
-              <circle cx={aToX(anchorBLab.a)} cy={bToY(anchorBLab.b)} r={8} fill={anchorBHex} stroke="white" strokeWidth={2} />
-              <text x={aToX(anchorBLab.a)} y={bToY(anchorBLab.b) + 3} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">B</text>
+              <circle cx={aToX(anchorBLab.a)} cy={bToY(anchorBLab.b)} r={9} fill={anchorBHex} stroke="white" strokeWidth={2.5} />
+              <text x={aToX(anchorBLab.a)} y={bToY(anchorBLab.b) + 3.5} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">B</text>
             </g>
           )}
           {/* Axis labels */}
-          <text x={PAD + SZ - 2} y={bToY(0) - 3} fontSize={6} fill="rgba(255,255,255,0.25)" textAnchor="end">a+</text>
-          <text x={aToX(0) + 3} y={PAD + 7} fontSize={6} fill="rgba(255,255,255,0.25)">b+</text>
+          <text x={PAD + SZ - 2} y={bToY(0) - 3} fontSize={6} fill="rgba(0,0,0,0.4)" textAnchor="end">a+</text>
+          <text x={aToX(0) + 3} y={PAD + 7} fontSize={6} fill="rgba(0,0,0,0.4)">b+</text>
         </svg>
       </div>
       <p style={{ margin: "3px 0 0", fontSize: 10, color: "var(--ion-color-medium)" }}>
-        White path = gradient sequence · dim dots = available · dashed = A→B reference & filter band
+        Background = OKLab ab-plane at current lightness · white path = gradient · dashed = A→B & filter band
       </p>
     </div>
   );
