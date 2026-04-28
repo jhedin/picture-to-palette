@@ -60,6 +60,10 @@ import { idealDmcPositions, nearestUnusedDmc } from "../lib/dmc-match";
 import { DMC_COLORS } from "../lib/dmc-colors";
 import { renderGradientPng } from "../lib/gradient-canvas";
 
+function srgbToLinear(c: number): number {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+}
 
 export default function Gradients() {
   const { state, dispatch } = usePalette();
@@ -230,30 +234,50 @@ export default function Gradients() {
         }
 
         if (prev.length >= 2) {
-          // Non-DMC: bisect the largest OKLab gap each step so the sequence
-          // stays perceptually equidistant as colors are added.
+          // Non-DMC: bisect the largest OKLab gap each step, restricted to
+          // colors that project within the current sequence endpoints (t ∈ [0,1]).
+          // This prevents colors "outside" the pinned endpoints from sneaking in.
           let result = [...prev];
           const used = new Set(result);
+          const endA = hexToOklab(result[0]);
+          const endB = hexToOklab(result[result.length - 1]);
+          const ab = { L: endB.L - endA.L, a: endB.a - endA.a, b: endB.b - endA.b };
+          const abLenSq = ab.L ** 2 + ab.a ** 2 + ab.b ** 2;
+          // Pre-compute OKLab entries for colorSpace candidates (t-filter + distance).
+          const csLabs = colorSpace.map((hex) => ({ hex, lab: hexToOklab(hex) }));
+          // Cache labs array and splice in new entries rather than recomputing each step.
+          let labs = result.map(hexToOklab);
+
           for (let step = 0; step < toAdd; step++) {
-            const labs = result.map(hexToOklab);
-            let maxDistSq = 0, gapIdx = 0;
-            for (let i = 0; i < result.length - 1; i++) {
+            const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
               const a = labs[i], b = labs[i + 1];
-              const dSq = (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2;
-              if (dSq > maxDistSq) { maxDistSq = dSq; gapIdx = i; }
+              return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
+            }).sort((x, y) => y.dSq - x.dSq);
+
+            let inserted = false;
+            for (const { i: gapIdx } of gaps) {
+              const a = labs[gapIdx], b = labs[gapIdx + 1];
+              const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+              let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
+              for (const { hex, lab } of csLabs) {
+                if (used.has(hex)) continue;
+                if (abLenSq > 0) {
+                  const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
+                  const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+                  if (t < -0.05 || t > 1.05) continue;
+                }
+                const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
+                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
+              }
+              if (bestHex) {
+                used.add(bestHex);
+                result.splice(gapIdx + 1, 0, bestHex);
+                labs.splice(gapIdx + 1, 0, bestLab);
+                inserted = true;
+                break;
+              }
             }
-            const a = labs[gapIdx], b = labs[gapIdx + 1];
-            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-            let bestHex: string | null = null, bestDistSq = Infinity;
-            for (const hex of colorSpace) {
-              if (used.has(hex)) continue;
-              const lab = hexToOklab(hex);
-              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2;
-              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; }
-            }
-            if (!bestHex) break;
-            used.add(bestHex);
-            result.splice(gapIdx + 1, 0, bestHex);
+            if (!inserted) break;
           }
           return result;
         }
@@ -320,6 +344,14 @@ export default function Gradients() {
         setSequence((prev) => prev.filter((h) => h !== activeIdStr));
         setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
       }
+    } else if (overIdStr === "shadow-zone" || overIdStr === "highlight-zone") {
+      const hex = activeIdStr.startsWith("shelf:") ? activeIdStr.slice(6) : activeIdStr;
+      const isShadow = overIdStr === "shadow-zone";
+      setSequence((prev) => {
+        const without = prev.filter((h) => h !== hex);
+        return isShadow ? [hex, ...without] : [...without, hex];
+      });
+      setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else if (overIdStr === "shelf-drop-zone") {
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
@@ -425,21 +457,17 @@ export default function Gradients() {
       const id = ctx.getImageData(0, 0, img.width, img.height);
       const d = id.data;
 
-      // Pre-compute OKLab + linear RGB for each available color (shelf + gradient).
-      const toLinear = (c: number) => {
-        const v = c / 255;
-        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-      };
-      const pool = colorSpace.map((hex) => {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        return { lab: hexToOklab(hex), r, g, b };
-      });
+      const pool = colorSpace.map((hex) => ({
+        lab: hexToOklab(hex),
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16),
+      }));
+      if (pool.length === 0) return;
       const THRESHOLD_SQ = 0.20 * 0.20;
 
       for (let i = 0; i < d.length; i += 4) {
-        const lr = toLinear(d[i]), lg = toLinear(d[i + 1]), lb = toLinear(d[i + 2]);
+        const lr = srgbToLinear(d[i]), lg = srgbToLinear(d[i + 1]), lb = srgbToLinear(d[i + 2]);
         const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
         const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
         const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
@@ -467,6 +495,28 @@ export default function Gradients() {
   }, [isDmcMode, state.captureThumb, colorSpace]);
   const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
   const { setNodeRef: setTrashRef, isOver: isOverTrash } = useDroppable({ id: "trash-zone" });
+  const { setNodeRef: setShadowZoneRef, isOver: isOverShadow } = useDroppable({ id: "shadow-zone" });
+  const { setNodeRef: setHighlightZoneRef, isOver: isOverHighlight } = useDroppable({ id: "highlight-zone" });
+
+  function handleExtendShadow() {
+    if (sequence.length === 0 || !isDmcMode) return;
+    const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+    const { shadows } = shadeRamp(allDmcHexes, sequence[0], 1);
+    if (shadows.length === 0) return;
+    const hex = shadows[0];
+    if (sequence.includes(hex)) return;
+    setSequence((prev) => [hex, ...prev]);
+  }
+
+  function handleExtendHighlight() {
+    if (sequence.length === 0 || !isDmcMode) return;
+    const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+    const { highlights } = shadeRamp(allDmcHexes, sequence[sequence.length - 1], 1);
+    if (highlights.length === 0) return;
+    const hex = highlights[highlights.length - 1];
+    if (sequence.includes(hex)) return;
+    setSequence((prev) => [...prev, hex]);
+  }
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
@@ -695,31 +745,103 @@ export default function Gradients() {
                 </button>
               </div>
 
-              <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
-                <div style={{ display: "flex", marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
-                  {sequence.map((hex, i) => {
-                    const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
-                    return (
-                      <SeqItem
-                        key={hex}
-                        hex={hex}
-                        index={i}
-                        total={sequence.length}
-                        isOutlier={outlierMap.get(hex) ?? false}
-                        isPinned={pinnedHexes.includes(hex)}
-                        isSelected={selectedSeqHex === hex}
-                        label={dmcEntry ? dmcEntry.id : `L${metas[i].L.toFixed(2)}`}
-                        title={
-                          outlierMap.get(hex)
-                            ? "Perceptual outlier — may not blend smoothly"
-                            : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
-                        }
-                        onSelect={() => setSelectedSeqHex((prev) => prev === hex ? null : hex)}
-                      />
-                    );
-                  })}
+              {/* Shadow / Highlight endpoint zones + extend buttons */}
+              <div style={{ display: "flex", gap: 4, alignItems: "stretch", marginBottom: 4 }}>
+                {isDmcMode && (
+                  <button
+                    type="button"
+                    onClick={handleExtendShadow}
+                    title="Extend shadow one step darker"
+                    style={{
+                      width: 28, flexShrink: 0,
+                      borderRadius: 6,
+                      border: "1px solid rgba(128,128,128,0.3)",
+                      background: "transparent",
+                      color: "var(--ion-color-medium)",
+                      fontSize: 16,
+                      cursor: "pointer",
+                    }}
+                  >←</button>
+                )}
+                <div
+                  ref={setShadowZoneRef}
+                  style={{
+                    width: 52, flexShrink: 0,
+                    borderRadius: 8,
+                    background: isOverShadow ? "rgba(var(--ion-color-primary-rgb),0.2)" : (sequence[0] ?? "var(--ion-color-light)"),
+                    border: isOverShadow ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: "4px 2px",
+                    minHeight: 64,
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <span style={{ fontSize: 8, color: "rgba(255,255,255,0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.9)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.2, textAlign: "center" }}>
+                    {isOverShadow ? "Set\nShadow" : "Shadow"}
+                  </span>
                 </div>
-              </SortableContext>
+
+                <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
+                  <div style={{ display: "flex", flex: 1, borderRadius: 0, overflow: "visible", minHeight: 64 }}>
+                    {sequence.map((hex, i) => {
+                      const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
+                      return (
+                        <SeqItem
+                          key={hex}
+                          hex={hex}
+                          index={i}
+                          total={sequence.length}
+                          isOutlier={outlierMap.get(hex) ?? false}
+                          isPinned={pinnedHexes.includes(hex)}
+                          isSelected={selectedSeqHex === hex}
+                          label={dmcEntry ? dmcEntry.id : `L${metas[i].L.toFixed(2)}`}
+                          title={
+                            outlierMap.get(hex)
+                              ? "Perceptual outlier — may not blend smoothly"
+                              : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
+                          }
+                          onSelect={() => setSelectedSeqHex((prev) => prev === hex ? null : hex)}
+                        />
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+
+                <div
+                  ref={setHighlightZoneRef}
+                  style={{
+                    width: 52, flexShrink: 0,
+                    borderRadius: 8,
+                    background: isOverHighlight ? "rgba(var(--ion-color-primary-rgb),0.2)" : (sequence[sequence.length - 1] ?? "var(--ion-color-light)"),
+                    border: isOverHighlight ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: "4px 2px",
+                    minHeight: 64,
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <span style={{ fontSize: 8, color: "rgba(255,255,255,0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.9)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.2, textAlign: "center" }}>
+                    {isOverHighlight ? "Set\nHighlight" : "Highlight"}
+                  </span>
+                </div>
+
+                {isDmcMode && (
+                  <button
+                    type="button"
+                    onClick={handleExtendHighlight}
+                    title="Extend highlight one step lighter"
+                    style={{
+                      width: 28, flexShrink: 0,
+                      borderRadius: 6,
+                      border: "1px solid rgba(128,128,128,0.3)",
+                      background: "transparent",
+                      color: "var(--ion-color-medium)",
+                      fontSize: 16,
+                      cursor: "pointer",
+                    }}
+                  >→</button>
+                )}
+              </div>
 
               {/* ── Alternatives / pin panel ──────────────────────────── */}
               {selectedSeqHex && (
