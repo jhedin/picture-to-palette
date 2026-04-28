@@ -224,7 +224,7 @@ export default function Capture() {
         {status === "extracting" && <IonProgressBar type="indeterminate" />}
 
         {/* ── Crop confirmation ─────────────────────────────────────────── */}
-        {status === "cropping" && (
+        {(status === "cropping" || status === "extracting") && (
           <>
             <IonText color="medium">
               <p style={{ margin: "0 0 8px", fontSize: 13 }}>
@@ -245,8 +245,8 @@ export default function Capture() {
           </>
         )}
 
-        {/* ── Extraction settings — visible in cropping and ready states ─── */}
-        {(status === "cropping" || status === "ready") && (<>
+        {/* ── Extraction settings — visible in cropping, extracting, and ready states ─── */}
+        {(status === "cropping" || status === "extracting" || status === "ready") && (<>
           <button
             type="button"
             onClick={() => setShowSettings((v) => !v)}
@@ -256,7 +256,7 @@ export default function Capture() {
           </button>
           {showSettings && (
             <div style={{ padding: "8px 0 4px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {status === "ready" && (
+              {(status === "ready" || status === "extracting") && (
                 <IonButton size="small" onClick={() => runExtraction(cropBox)} disabled={status === "extracting"} style={{ alignSelf: "flex-start" }}>
                   {status === "extracting" ? <IonSpinner name="crescent" /> : "Re-extract with these settings"}
                 </IonButton>
