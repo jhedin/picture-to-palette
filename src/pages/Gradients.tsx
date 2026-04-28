@@ -443,9 +443,18 @@ export default function Gradients() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
-  // Track the last stable "over" so a slight pointer-position change on finger-lift
-  // doesn't cause the drop to fall back to a sequence chip instead of the shelf.
+  // Track the last stable "over" and raw pointer position during drag so
+  // handleDragEnd can walk the DOM to find the real named drop zone even when
+  // the final pointer coordinates glitch onto a gradient chip.
   const lastOverIdRef = useRef<string | null>(null);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!activeId) { lastPointerRef.current = null; return; }
+    const track = (e: PointerEvent) => { lastPointerRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("pointermove", track);
+    return () => window.removeEventListener("pointermove", track);
+  }, [activeId]);
 
   function handleDragStart({ active }: DragStartEvent) {
     setActiveId(String(active.id));
@@ -460,15 +469,26 @@ export default function Gradients() {
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveId(null);
     const activeIdStr = String(active.id);
-    // Named zones (shelf, trash, shadow, highlight) always win over whatever
-    // over reports at the release frame — a touch flinch can land the pointer
-    // on a gradient chip at the last millisecond, but if the last stable hover
-    // was a named zone we honour that intent.
-    const rawOver = over ? String(over.id) : null;
-    const overIdStr = (lastOverIdRef.current && NAMED_ZONES.has(lastOverIdRef.current))
-      ? lastOverIdRef.current
-      : (rawOver ?? lastOverIdRef.current ?? "");
+
+    // Walk the DOM from the last known pointer position to find the true
+    // drop target — any named zone div carries data-drop-zone so .closest()
+    // finds it even if the pointer landed on a child element (chip label, etc).
+    let overIdStr = over ? String(over.id) : null;
+    const pt = lastPointerRef.current;
+    if (pt) {
+      const el = document.elementFromPoint(pt.x, pt.y);
+      const zone = (el?.closest("[data-drop-zone]") as HTMLElement | null)?.dataset.dropZone;
+      if (zone && NAMED_ZONES.has(zone)) overIdStr = zone;
+    }
+    // Ref fallback: if the DOM walk missed but the last stable hover was a
+    // named zone, honour that intent.
+    if (!overIdStr || !NAMED_ZONES.has(overIdStr)) {
+      if (lastOverIdRef.current && NAMED_ZONES.has(lastOverIdRef.current)) {
+        overIdStr = lastOverIdRef.current;
+      }
+    }
     lastOverIdRef.current = null;
+    lastPointerRef.current = null;
     if (!overIdStr) return;
     if (activeIdStr.startsWith("shelf:")) {
       const hex = activeIdStr.slice(6);
@@ -980,6 +1000,7 @@ export default function Gradients() {
                 )}
                 <div
                   ref={setShadowZoneRef}
+                  data-drop-zone="shadow-zone"
                   style={{
                     width: 52, flexShrink: 0,
                     borderRadius: 8,
@@ -1024,6 +1045,7 @@ export default function Gradients() {
 
                 <div
                   ref={setHighlightZoneRef}
+                  data-drop-zone="highlight-zone"
                   style={{
                     width: 52, flexShrink: 0,
                     borderRadius: 8,
@@ -1165,6 +1187,7 @@ export default function Gradients() {
             // The ref covers the label + chips so the whole section is the drop zone.
             <div
               ref={setShelfDropRef}
+              data-drop-zone="shelf-drop-zone"
               style={{
                 marginBottom: 16,
                 borderRadius: 8,
@@ -1211,6 +1234,7 @@ export default function Gradients() {
           {isDmcMode && sequence.length > 0 && (
             <div
               ref={setTrashRef}
+              data-drop-zone="trash-zone"
               style={{
                 display: "flex",
                 alignItems: "center",
