@@ -95,6 +95,9 @@ export default function Capture() {
   async function runExtraction(crop: CropBox) {
     if (!imageDataRef.current) return;
     setStatus("extracting");
+    // Yield to the browser's paint pipeline so the spinner renders before
+    // the main thread blocks on worker message serialisation.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
       const { hexes, debug } = await extractPalette(imageDataRef.current, crop, options);
       if (hexes.length === 0) {
