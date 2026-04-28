@@ -344,6 +344,14 @@ export default function Gradients() {
         setSequence((prev) => prev.filter((h) => h !== activeIdStr));
         setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
       }
+    } else if (overIdStr === "shadow-zone" || overIdStr === "highlight-zone") {
+      const hex = activeIdStr.startsWith("shelf:") ? activeIdStr.slice(6) : activeIdStr;
+      const isShadow = overIdStr === "shadow-zone";
+      setSequence((prev) => {
+        const without = prev.filter((h) => h !== hex);
+        return isShadow ? [hex, ...without] : [...without, hex];
+      });
+      setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else if (overIdStr === "shelf-drop-zone") {
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
@@ -487,6 +495,28 @@ export default function Gradients() {
   }, [isDmcMode, state.captureThumb, colorSpace]);
   const { setNodeRef: setShelfDropRef, isOver: isOverShelf } = useDroppable({ id: "shelf-drop-zone" });
   const { setNodeRef: setTrashRef, isOver: isOverTrash } = useDroppable({ id: "trash-zone" });
+  const { setNodeRef: setShadowZoneRef, isOver: isOverShadow } = useDroppable({ id: "shadow-zone" });
+  const { setNodeRef: setHighlightZoneRef, isOver: isOverHighlight } = useDroppable({ id: "highlight-zone" });
+
+  function handleExtendShadow() {
+    if (sequence.length === 0 || !isDmcMode) return;
+    const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+    const { shadows } = shadeRamp(allDmcHexes, sequence[0], 1);
+    if (shadows.length === 0) return;
+    const hex = shadows[0]; // darkest-first, so [0] is the new shadow step
+    if (sequence.includes(hex)) return;
+    setSequence((prev) => [hex, ...prev]);
+  }
+
+  function handleExtendHighlight() {
+    if (sequence.length === 0 || !isDmcMode) return;
+    const allDmcHexes = DMC_COLORS.map((d) => d.hex);
+    const { highlights } = shadeRamp(allDmcHexes, sequence[sequence.length - 1], 1);
+    if (highlights.length === 0) return;
+    const hex = highlights[highlights.length - 1]; // push returns lightest-last
+    if (sequence.includes(hex)) return;
+    setSequence((prev) => [...prev, hex]);
+  }
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
   const activeHex = activeId
@@ -715,31 +745,103 @@ export default function Gradients() {
                 </button>
               </div>
 
-              <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
-                <div style={{ display: "flex", marginBottom: 8, borderRadius: 10, overflow: "visible", minHeight: 80 }}>
-                  {sequence.map((hex, i) => {
-                    const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
-                    return (
-                      <SeqItem
-                        key={hex}
-                        hex={hex}
-                        index={i}
-                        total={sequence.length}
-                        isOutlier={outlierMap.get(hex) ?? false}
-                        isPinned={pinnedHexes.includes(hex)}
-                        isSelected={selectedSeqHex === hex}
-                        label={dmcEntry ? dmcEntry.id : `L${metas[i].L.toFixed(2)}`}
-                        title={
-                          outlierMap.get(hex)
-                            ? "Perceptual outlier — may not blend smoothly"
-                            : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
-                        }
-                        onSelect={() => setSelectedSeqHex((prev) => prev === hex ? null : hex)}
-                      />
-                    );
-                  })}
+              {/* Shadow / Highlight endpoint zones + extend buttons */}
+              <div style={{ display: "flex", gap: 4, alignItems: "stretch", marginBottom: 4 }}>
+                {isDmcMode && (
+                  <button
+                    type="button"
+                    onClick={handleExtendShadow}
+                    title="Extend shadow one step darker"
+                    style={{
+                      width: 28, flexShrink: 0,
+                      borderRadius: 6,
+                      border: "1px solid rgba(128,128,128,0.3)",
+                      background: "transparent",
+                      color: "var(--ion-color-medium)",
+                      fontSize: 16,
+                      cursor: "pointer",
+                    }}
+                  >←</button>
+                )}
+                <div
+                  ref={setShadowZoneRef}
+                  style={{
+                    width: 52, flexShrink: 0,
+                    borderRadius: 8,
+                    background: isOverShadow ? "rgba(var(--ion-color-primary-rgb),0.2)" : (sequence[0] ?? "var(--ion-color-light)"),
+                    border: isOverShadow ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: "4px 2px",
+                    minHeight: 64,
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <span style={{ fontSize: 8, color: "rgba(255,255,255,0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.9)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.2, textAlign: "center" }}>
+                    {isOverShadow ? "Set\nShadow" : "Shadow"}
+                  </span>
                 </div>
-              </SortableContext>
+
+                <SortableContext items={sequence} strategy={horizontalListSortingStrategy}>
+                  <div style={{ display: "flex", flex: 1, borderRadius: 0, overflow: "visible", minHeight: 64 }}>
+                    {sequence.map((hex, i) => {
+                      const dmcEntry = isDmcMode ? dmcPool.find((d) => d.hex === hex) : null;
+                      return (
+                        <SeqItem
+                          key={hex}
+                          hex={hex}
+                          index={i}
+                          total={sequence.length}
+                          isOutlier={outlierMap.get(hex) ?? false}
+                          isPinned={pinnedHexes.includes(hex)}
+                          isSelected={selectedSeqHex === hex}
+                          label={dmcEntry ? dmcEntry.id : `L${metas[i].L.toFixed(2)}`}
+                          title={
+                            outlierMap.get(hex)
+                              ? "Perceptual outlier — may not blend smoothly"
+                              : (dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex)
+                          }
+                          onSelect={() => setSelectedSeqHex((prev) => prev === hex ? null : hex)}
+                        />
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+
+                <div
+                  ref={setHighlightZoneRef}
+                  style={{
+                    width: 52, flexShrink: 0,
+                    borderRadius: 8,
+                    background: isOverHighlight ? "rgba(var(--ion-color-primary-rgb),0.2)" : (sequence[sequence.length - 1] ?? "var(--ion-color-light)"),
+                    border: isOverHighlight ? "2px dashed var(--ion-color-primary)" : "2px solid transparent",
+                    display: "flex", alignItems: "flex-end", justifyContent: "center",
+                    padding: "4px 2px",
+                    minHeight: 64,
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <span style={{ fontSize: 8, color: "rgba(255,255,255,0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.9)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, lineHeight: 1.2, textAlign: "center" }}>
+                    {isOverHighlight ? "Set\nHighlight" : "Highlight"}
+                  </span>
+                </div>
+
+                {isDmcMode && (
+                  <button
+                    type="button"
+                    onClick={handleExtendHighlight}
+                    title="Extend highlight one step lighter"
+                    style={{
+                      width: 28, flexShrink: 0,
+                      borderRadius: 6,
+                      border: "1px solid rgba(128,128,128,0.3)",
+                      background: "transparent",
+                      color: "var(--ion-color-medium)",
+                      fontSize: 16,
+                      cursor: "pointer",
+                    }}
+                  >→</button>
+                )}
+              </div>
 
               {/* ── Alternatives / pin panel ──────────────────────────── */}
               {selectedSeqHex && (
