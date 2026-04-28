@@ -337,6 +337,25 @@ export default function Gradients() {
           result.splice(insertPos, 0, bestHex);
           labs.splice(insertPos, 0, bestLab);
         }
+        // t-ordered insertion prevents out-of-range picks but adjacent colors
+        // can still zigzag in the perpendicular directions. Re-sequence the
+        // interior by nearest-neighbor to minimise the total 3D path length.
+        if (result.length > 2) {
+          const first = result[0], last = result[result.length - 1];
+          let cur = hexToOklab(first);
+          const pool = result.slice(1, -1).map((h) => ({ hex: h, lab: hexToOklab(h) }));
+          const ordered: string[] = [];
+          while (pool.length > 0) {
+            let minD = Infinity, idx = 0;
+            for (let i = 0; i < pool.length; i++) {
+              const d = (cur.L - pool[i].lab.L) ** 2 + (cur.a - pool[i].lab.a) ** 2 + (cur.b - pool[i].lab.b) ** 2;
+              if (d < minD) { minD = d; idx = i; }
+            }
+            cur = pool[idx].lab;
+            ordered.push(pool.splice(idx, 1)[0].hex);
+          }
+          result = [first, ...ordered, last];
+        }
         return result;
       }
 
