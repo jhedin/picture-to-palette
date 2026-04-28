@@ -13,6 +13,7 @@ export const IonTitle = ({ children }: { children?: React.ReactNode }) => <h1>{c
 export const IonContent = ({ children, ...rest }: DivProps) => <div {...rest}>{children}</div>;
 export const IonText = ({ children }: { children?: React.ReactNode }) => <span>{children}</span>;
 export const IonProgressBar = () => <progress />;
+export const IonSpinner = () => <span aria-label="loading" />;
 export const IonToast = ({
   isOpen,
   message,
