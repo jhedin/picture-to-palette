@@ -959,6 +959,15 @@ export default function Gradients() {
             </>
           )}
 
+          {/* ── OKLab color space view ───────────────────────────────── */}
+          <OklabPlane
+            colorSpace={colorSpace}
+            sequence={sequence}
+            anchorAHex={oklabAnalysis?.anchorAHex}
+            anchorBHex={oklabAnalysis?.anchorBHex}
+            maxPerp={oklabAnalysis?.maxPerp}
+          />
+
           {/* ── Shelf ─────────────────────────────────────────────────── */}
           {(shelf.length > 0 || (activeId && !activeId.startsWith("shelf:"))) && (
             <>
@@ -1304,6 +1313,138 @@ function OklabScatter({
       </svg>
       <p style={{ margin: "4px 0 0", fontSize: 10, color: "var(--ion-color-medium)" }}>
         X = t (0=A, 1=B) · Y = perp distance · dashed line = current threshold · dim = excluded
+      </p>
+    </div>
+  );
+}
+
+function OklabPlane({
+  colorSpace,
+  sequence,
+  anchorAHex,
+  anchorBHex,
+  maxPerp,
+}: {
+  colorSpace: string[];
+  sequence: string[];
+  anchorAHex?: string;
+  anchorBHex?: string;
+  maxPerp?: number;
+}) {
+  const PAD = 14;
+  const SZ = 220;
+  const TW = SZ + PAD * 2;
+  const TH = SZ + PAD * 2;
+  const A_RANGE = 0.38, B_RANGE = 0.38;
+  const aToX = (a: number) => PAD + ((a + A_RANGE) / (A_RANGE * 2)) * SZ;
+  const bToY = (b: number) => PAD + SZ - ((b + B_RANGE) / (B_RANGE * 2)) * SZ;
+
+  const seqSet = new Set(sequence);
+  const anchorALab = anchorAHex ? hexToOklab(anchorAHex) : null;
+  const anchorBLab = anchorBHex ? hexToOklab(anchorBHex) : null;
+
+  const seqPts = sequence
+    .map(h => { const { a, b } = hexToOklab(h); return `${aToX(a)},${bToY(b)}`; })
+    .join(" ");
+
+  let refLine: React.ReactNode = null;
+  if (anchorALab && anchorBLab) {
+    const da = anchorBLab.a - anchorALab.a, db = anchorBLab.b - anchorALab.b;
+    refLine = (
+      <line
+        x1={aToX(anchorALab.a - da * 0.2)} y1={bToY(anchorALab.b - db * 0.2)}
+        x2={aToX(anchorBLab.a + da * 0.2)} y2={bToY(anchorBLab.b + db * 0.2)}
+        stroke="rgba(255,255,255,0.2)" strokeWidth={1} strokeDasharray="4 3"
+      />
+    );
+  }
+
+  let band: React.ReactNode = null;
+  if (anchorALab && anchorBLab && maxPerp && maxPerp > 0) {
+    const da = anchorBLab.a - anchorALab.a, db = anchorBLab.b - anchorALab.b;
+    const len = Math.sqrt(da * da + db * db);
+    if (len > 0.001) {
+      const px = -db / len, py = da / len;
+      const off = Math.min(maxPerp, B_RANGE * 0.9);
+      const ext = 0.2;
+      const x1a = anchorALab.a - da * ext, y1a = anchorALab.b - db * ext;
+      const x2a = anchorBLab.a + da * ext, y2a = anchorBLab.b + db * ext;
+      band = (
+        <>
+          <line x1={aToX(x1a + px * off)} y1={bToY(y1a + py * off)} x2={aToX(x2a + px * off)} y2={bToY(y2a + py * off)} stroke="rgba(239,68,68,0.4)" strokeWidth={1} strokeDasharray="3 2" />
+          <line x1={aToX(x1a - px * off)} y1={bToY(y1a - py * off)} x2={aToX(x2a - px * off)} y2={bToY(y2a - py * off)} stroke="rgba(239,68,68,0.4)" strokeWidth={1} strokeDasharray="3 2" />
+        </>
+      );
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--ion-color-medium)" }}>
+        OKLab color space (a/b plane)
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <svg
+          viewBox={`0 0 ${TW} ${TH}`}
+          style={{ width: "100%", maxWidth: TW, display: "block", borderRadius: 8, background: "#181818" }}
+          aria-label="OKLab ab-plane showing colors and gradient path"
+        >
+          {/* Axes */}
+          <line x1={PAD} y1={bToY(0)} x2={PAD + SZ} y2={bToY(0)} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
+          <line x1={aToX(0)} y1={PAD} x2={aToX(0)} y2={PAD + SZ} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
+          {/* Hue landmarks */}
+          {([
+            ["red",    0.27,  0.03],
+            ["ylw",   0.02,  0.24],
+            ["grn",  -0.16,  0.12],
+            ["teal", -0.14, -0.14],
+            ["blu",  -0.02, -0.26],
+            ["prpl",  0.22, -0.17],
+          ] as [string, number, number][]).map(([lbl, a, b]) => (
+            <text key={lbl} x={aToX(a)} y={bToY(b)} fontSize={7}
+              fill="rgba(255,255,255,0.18)" textAnchor="middle" dominantBaseline="central">{lbl}</text>
+          ))}
+          {/* A→B reference */}
+          {refLine}
+          {/* Filter band */}
+          {band}
+          {/* Gradient path */}
+          {sequence.length >= 2 && (
+            <polyline points={seqPts} fill="none" stroke="rgba(255,255,255,0.55)"
+              strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          )}
+          {/* Shelf dots */}
+          {colorSpace.filter(h => !seqSet.has(h) && h !== anchorAHex && h !== anchorBHex).map(h => {
+            const { a, b } = hexToOklab(h);
+            return <circle key={h} cx={aToX(a)} cy={bToY(b)} r={3} fill={h} stroke="rgba(0,0,0,0.4)" strokeWidth={0.8} opacity={0.5} />;
+          })}
+          {/* Sequence dots */}
+          {sequence.map((h, i) => {
+            if (h === anchorAHex || h === anchorBHex) return null;
+            const { a, b } = hexToOklab(h);
+            return <circle key={`seq-${i}`} cx={aToX(a)} cy={bToY(b)} r={5} fill={h} stroke="white" strokeWidth={1.5} />;
+          })}
+          {/* Anchor A */}
+          {anchorALab && anchorAHex && (
+            <g>
+              <circle cx={aToX(anchorALab.a)} cy={bToY(anchorALab.b)} r={8} fill={anchorAHex} stroke="white" strokeWidth={2} />
+              <text x={aToX(anchorALab.a)} y={bToY(anchorALab.b) + 3} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">A</text>
+            </g>
+          )}
+          {/* Anchor B */}
+          {anchorBLab && anchorBHex && (
+            <g>
+              <circle cx={aToX(anchorBLab.a)} cy={bToY(anchorBLab.b)} r={8} fill={anchorBHex} stroke="white" strokeWidth={2} />
+              <text x={aToX(anchorBLab.a)} y={bToY(anchorBLab.b) + 3} fontSize={8} textAnchor="middle" fill="white" fontWeight="bold">B</text>
+            </g>
+          )}
+          {/* Axis labels */}
+          <text x={PAD + SZ - 2} y={bToY(0) - 3} fontSize={6} fill="rgba(255,255,255,0.25)" textAnchor="end">a+</text>
+          <text x={aToX(0) + 3} y={PAD + 7} fontSize={6} fill="rgba(255,255,255,0.25)">b+</text>
+        </svg>
+      </div>
+      <p style={{ margin: "3px 0 0", fontSize: 10, color: "var(--ion-color-medium)" }}>
+        White path = gradient sequence · dim dots = available · dashed = A→B reference & filter band
       </p>
     </div>
   );
