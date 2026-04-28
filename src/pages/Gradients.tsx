@@ -23,7 +23,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
+import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   SortableContext,
   arrayMove,
@@ -267,6 +267,16 @@ export default function Gradients() {
           for (const { i: gapIdx } of gaps) {
             const a = labs[gapIdx], b = labs[gapIdx + 1];
             const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+            // Narrow the t-range to this gap's own endpoints so a color near
+            // anchor A can't win a gap far along the path (the root cause of
+            // the "lower bound pile-up" zigzag).
+            let tMin = -0.05, tMax = 1.05;
+            if (abLenSq > 0) {
+              const t_lo = ((a.L - endA.L) * ab.L + (a.a - endA.a) * ab.a + (a.b - endA.b) * ab.b) / abLenSq;
+              const t_hi = ((b.L - endA.L) * ab.L + (b.a - endA.a) * ab.a + (b.b - endA.b) * ab.b) / abLenSq;
+              tMin = Math.min(t_lo, t_hi) - 0.02;
+              tMax = Math.max(t_lo, t_hi) + 0.02;
+            }
             let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
             for (const { hex, lab } of csLabs) {
               if (used.has(hex)) continue;
@@ -274,7 +284,7 @@ export default function Gradients() {
               if (abLenSq > 0) {
                 const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
                 const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-                if (t < -0.05 || t > 1.05) continue;
+                if (t < tMin || t > tMax) continue;
                 // Perpendicular corridor filter — same as gradientBetween.
                 const apLenSq = ap.L ** 2 + ap.a ** 2 + ap.b ** 2;
                 perpSq = Math.max(0, apLenSq - t * t * abLenSq);
@@ -378,16 +388,28 @@ export default function Gradients() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
+  // Track the last stable "over" so a slight pointer-position change on finger-lift
+  // doesn't cause the drop to fall back to a sequence chip instead of the shelf.
+  const lastOverIdRef = useRef<string | null>(null);
+
   function handleDragStart({ active }: DragStartEvent) {
     setActiveId(String(active.id));
     setSelectedSeqHex(null);
+    lastOverIdRef.current = null;
+  }
+
+  function handleDragOver({ over }: DragOverEvent) {
+    lastOverIdRef.current = over ? String(over.id) : null;
   }
 
   function handleDragEnd({ active, over }: DragEndEvent) {
     setActiveId(null);
-    if (!over) return;
     const activeIdStr = String(active.id);
-    const overIdStr = String(over.id);
+    // Use the last stable over-id as fallback — on touch, pointerup coordinates
+    // can differ from the last pointermove and miss the shelf on release.
+    const overIdStr = over ? String(over.id) : (lastOverIdRef.current ?? "");
+    lastOverIdRef.current = null;
+    if (!overIdStr) return;
     if (activeIdStr.startsWith("shelf:")) {
       const hex = activeIdStr.slice(6);
       setSequence((prev) => {
@@ -671,6 +693,7 @@ export default function Gradients() {
           sensors={sensors}
           collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
           {/* ── Capture preview (DMC mode) ───────────────────────────── */}
