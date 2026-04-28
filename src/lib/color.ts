@@ -123,7 +123,7 @@ export function gradientBetween(
         const ap = { L: lab.L - a.L, a: lab.a - a.a, b: lab.b - a.b };
         const apLenSq = ap.L * ap.L + ap.a * ap.a + ap.b * ap.b;
         const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-        const perpSq = apLenSq - t * t * abLenSq;
+        const perpSq = Math.max(0, apLenSq - t * t * abLenSq);
         return { hex, t, perpSq };
       })
       .filter(({ t, perpSq }) => t > 0 && t < 1 && perpSq < maxPerpSq)
@@ -157,6 +157,14 @@ export function gradientBetween(
     const hA = hueOf(a), hB = hueOf(b);
     // Signed arc hA→hB on the shorter path (−180..180); positive = clockwise.
     const diff = ((hB - hA + 540) % 360) - 180;
+    // Same hue anchors — no arc to filter on; fall back to lightness sort.
+    if (Math.abs(diff) < 1) {
+      const asc = a.L <= b.L;
+      return base
+        .filter(({ lab }) => { const lo = Math.min(a.L, b.L), hi = Math.max(a.L, b.L); return lab.L > lo && lab.L < hi; })
+        .sort((x, y) => asc ? x.lab.L - y.lab.L : y.lab.L - x.lab.L)
+        .map(({ hex }) => hex);
+    }
     return base
       .filter(({ lab }) => {
         // Angular distance from hA in the direction of the shorter arc.

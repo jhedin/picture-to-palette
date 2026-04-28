@@ -14,6 +14,7 @@ import {
 import {
   DndContext,
   DragOverlay,
+  MeasuringStrategy,
   PointerSensor,
   closestCenter,
   pointerWithin,
@@ -116,6 +117,7 @@ export default function Gradients() {
   const [perpRel, setPerpRel] = useState(NATURAL_PERP_THRESHOLD);
   const [perpCap, setPerpCap] = useState(NATURAL_PERP_ABS_CAP);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [fillMode, setFillMode] = useState<"gap-fill" | "farthest">("gap-fill");
 
   const perpOpts = useMemo(() => ({ threshold: perpRel, absCap: perpCap }), [perpRel, perpCap]);
 
@@ -208,7 +210,7 @@ export default function Gradients() {
     if (maxColors > 0 && pinnedHexes.length > maxColors) setMaxColors(pinnedHexes.length);
   }, [pinnedHexes.length, maxColors]);
 
-  function applyMaxColors(n: number) {
+  function applyMaxColors(n: number, mode: "gap-fill" | "farthest" = fillMode) {
     const effective = Math.max(n, pinnedHexes.length);
     setMaxColors(effective);
     setSequence((prev) => {
@@ -259,66 +261,81 @@ export default function Gradients() {
         let labs = result.map(hexToOklab);
 
         for (let step = 0; step < toAdd; step++) {
-          const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
-            const a = labs[i], b = labs[i + 1];
-            return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
-          }).sort((x, y) => y.dSq - x.dSq);
-          let inserted = false;
-          for (const { i: gapIdx } of gaps) {
-            const a = labs[gapIdx], b = labs[gapIdx + 1];
-            const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
-            // Narrow the t-range to this gap's own endpoints so a color near
-            // anchor A can't win a gap far along the path (the root cause of
-            // the "lower bound pile-up" zigzag).
-            let tMin = -0.05, tMax = 1.05;
-            if (abLenSq > 0) {
-              const t_lo = ((a.L - endA.L) * ab.L + (a.a - endA.a) * ab.a + (a.b - endA.b) * ab.b) / abLenSq;
-              const t_hi = ((b.L - endA.L) * ab.L + (b.a - endA.a) * ab.a + (b.b - endA.b) * ab.b) / abLenSq;
-              tMin = Math.min(t_lo, t_hi) - 0.02;
-              tMax = Math.max(t_lo, t_hi) + 0.02;
-            }
-            let bestHex: string | null = null, bestLab = endA, bestDistSq = Infinity;
+          let bestHex: string | null = null, bestLab = endA;
+
+          if (mode === "farthest") {
+            // Farthest-point sampling: pick the candidate that maximises its
+            // minimum distance to any already-selected color, subject to the
+            // perp corridor. Guarantees perceptually spread coverage.
+            let bestMinDistSq = -1;
             for (const { hex, lab } of csLabs) {
               if (used.has(hex)) continue;
-              let perpSq = 0;
               if (abLenSq > 0) {
                 const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
                 const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
-                if (t < tMin || t > tMax) continue;
-                // Perpendicular corridor filter — same as gradientBetween.
+                if (t < -0.05 || t > 1.05) continue;
                 const apLenSq = ap.L ** 2 + ap.a ** 2 + ap.b ** 2;
-                perpSq = Math.max(0, apLenSq - t * t * abLenSq);
-                if (perpSq > maxPerpSq) continue;
+                if (Math.max(0, apLenSq - t * t * abLenSq) > maxPerpSq) continue;
               }
-              // Combine midpoint distance with perp penalty so on-line colors
-              // beat off-line ones even when slightly farther from the midpoint.
-              const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2 + perpSq;
-              if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
+              let minDistSq = Infinity;
+              for (const el of labs) {
+                const dSq = (lab.L - el.L) ** 2 + (lab.a - el.a) ** 2 + (lab.b - el.b) ** 2;
+                if (dSq < minDistSq) minDistSq = dSq;
+              }
+              if (minDistSq > bestMinDistSq) { bestMinDistSq = minDistSq; bestHex = hex; bestLab = lab; }
             }
-            if (bestHex) {
-              used.add(bestHex);
-              // Insert at the t-ordered position, not blindly at gapIdx+1.
-              // The nearest candidate may project outside the gap's range, so
-              // using its t-value preserves the sequence's sorted order.
-              let insertPos = result.length;
+          } else {
+            // Gap-fill: find the largest gap, then insert the color nearest to
+            // its midpoint that also falls within the gap's t-range.
+            const gaps = Array.from({ length: result.length - 1 }, (_, i) => {
+              const a = labs[i], b = labs[i + 1];
+              return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
+            }).sort((x, y) => y.dSq - x.dSq);
+            for (const { i: gapIdx } of gaps) {
+              const a = labs[gapIdx], b = labs[gapIdx + 1];
+              const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
+              let tMin = -0.05, tMax = 1.05;
               if (abLenSq > 0) {
-                const apb = { L: bestLab.L - endA.L, a: bestLab.a - endA.a, b: bestLab.b - endA.b };
-                const t_b = (apb.L * ab.L + apb.a * ab.a + apb.b * ab.b) / abLenSq;
-                for (let j = 0; j < labs.length; j++) {
-                  const lj = labs[j];
-                  const t_j = ((lj.L - endA.L) * ab.L + (lj.a - endA.a) * ab.a + (lj.b - endA.b) * ab.b) / abLenSq;
-                  if (t_b < t_j) { insertPos = j; break; }
-                }
-              } else {
-                insertPos = gapIdx + 1;
+                const t_lo = ((a.L - endA.L) * ab.L + (a.a - endA.a) * ab.a + (a.b - endA.b) * ab.b) / abLenSq;
+                const t_hi = ((b.L - endA.L) * ab.L + (b.a - endA.a) * ab.a + (b.b - endA.b) * ab.b) / abLenSq;
+                tMin = Math.min(t_lo, t_hi) - 0.02;
+                tMax = Math.max(t_lo, t_hi) + 0.02;
               }
-              result.splice(insertPos, 0, bestHex);
-              labs.splice(insertPos, 0, bestLab);
-              inserted = true;
-              break;
+              let bestDistSq = Infinity;
+              for (const { hex, lab } of csLabs) {
+                if (used.has(hex)) continue;
+                let perpSq = 0;
+                if (abLenSq > 0) {
+                  const ap = { L: lab.L - endA.L, a: lab.a - endA.a, b: lab.b - endA.b };
+                  const t = (ap.L * ab.L + ap.a * ab.a + ap.b * ab.b) / abLenSq;
+                  if (t < tMin || t > tMax) continue;
+                  const apLenSq = ap.L ** 2 + ap.a ** 2 + ap.b ** 2;
+                  perpSq = Math.max(0, apLenSq - t * t * abLenSq);
+                  if (perpSq > maxPerpSq) continue;
+                }
+                const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2 + perpSq;
+                if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
+              }
+              if (bestHex) break;
             }
           }
-          if (!inserted) break;
+
+          if (!bestHex) break;
+          used.add(bestHex);
+          // Insert at the t-ordered position so the sequence stays sorted
+          // regardless of which selection algorithm picked the candidate.
+          let insertPos = result.length;
+          if (abLenSq > 0) {
+            const apb = { L: bestLab.L - endA.L, a: bestLab.a - endA.a, b: bestLab.b - endA.b };
+            const t_b = (apb.L * ab.L + apb.a * ab.a + apb.b * ab.b) / abLenSq;
+            for (let j = 0; j < labs.length; j++) {
+              const lj = labs[j];
+              const t_j = ((lj.L - endA.L) * ab.L + (lj.a - endA.a) * ab.a + (lj.b - endA.b) * ab.b) / abLenSq;
+              if (t_b < t_j) { insertPos = j; break; }
+            }
+          }
+          result.splice(insertPos, 0, bestHex);
+          labs.splice(insertPos, 0, bestLab);
         }
         return result;
       }
@@ -327,10 +344,28 @@ export default function Gradients() {
       if (effective >= prev.length) {
         const toAdd = effective - prev.length;
         if (toAdd <= 0) return prev;
-        const shelf = colorSpace.filter((h) => !prev.includes(h));
-        if (shelf.length === 0) return prev;
-        const candidates = buildSorted(colorSpace).filter((h) => shelf.includes(h)).slice(0, toAdd);
-        return candidates.length === 0 ? prev : [...prev, ...candidates];
+        const sorted = buildSorted(colorSpace).filter((h) => !prev.includes(h));
+        if (sorted.length === 0) return prev;
+        if (mode === "gap-fill") {
+          return [...prev, ...sorted.slice(0, toAdd)];
+        }
+        // Farthest mode: radius exclusion — each new color must be at least
+        // 0.10 OKLab units from everything already selected.
+        const MIN_DIST_SQ = 0.10 * 0.10;
+        const result = [...prev];
+        const resultLabs = result.map(hexToOklab);
+        for (const hex of sorted) {
+          if (result.length >= effective) break;
+          const lab = hexToOklab(hex);
+          const tooClose = resultLabs.some(
+            (el) => (lab.L - el.L) ** 2 + (lab.a - el.a) ** 2 + (lab.b - el.b) ** 2 < MIN_DIST_SQ,
+          );
+          if (!tooClose) { result.push(hex); resultLabs.push(lab); }
+        }
+        if (result.length < effective) {
+          result.push(...sorted.filter((h) => !result.includes(h)).slice(0, effective - result.length));
+        }
+        return result;
       }
       // Shrink without enough pins: min-gap removal.
       let result = [...prev];
@@ -399,7 +434,7 @@ export default function Gradients() {
   }
 
   function handleDragOver({ over }: DragOverEvent) {
-    lastOverIdRef.current = over ? String(over.id) : null;
+    if (over) lastOverIdRef.current = String(over.id);
   }
 
   function handleDragEnd({ active, over }: DragEndEvent) {
@@ -695,6 +730,7 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         >
           {/* ── Capture preview (DMC mode) ───────────────────────────── */}
           {isDmcMode && processedThumb && (
@@ -738,7 +774,30 @@ export default function Gradients() {
             {MODE_DESC[sortMode]}
           </p>
 
-          {/* ── Max-colors slider ─────────────────────────────────────── */}
+          {/* ── Fill mode + max-colors slider ────────────────────────── */}
+          {colorSpace.length > 1 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 12, color: "var(--ion-color-medium)", whiteSpace: "nowrap" }}>Fill:</span>
+              {(["gap-fill", "farthest"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setFillMode(m); applyMaxColors(sliderValue, m); }}
+                  style={{
+                    padding: "2px 10px",
+                    borderRadius: 20,
+                    border: "1px solid var(--ion-color-primary)",
+                    background: fillMode === m ? "var(--ion-color-primary)" : "transparent",
+                    color: fillMode === m ? "var(--ion-color-primary-contrast)" : "var(--ion-color-primary)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  {m === "gap-fill" ? "Gap-fill" : "Spread"}
+                </button>
+              ))}
+            </div>
+          )}
           {colorSpace.length > 1 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <span style={{ fontSize: 12, color: "var(--ion-color-medium)", whiteSpace: "nowrap" }}>
