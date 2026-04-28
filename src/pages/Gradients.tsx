@@ -104,12 +104,12 @@ export default function Gradients() {
     return result;
   }, [isDmcMode, colorSpace]);
 
-  const [sortMode, setSortMode] = useState<GradientMode>("natural");
-  const [sequence, setSequence] = useState<string[]>([]);
-  const [pinnedHexes, setPinnedHexes] = useState<string[]>([]);
+  const [sortMode, setSortMode] = useState<GradientMode>(() => (state.gradientSortMode as GradientMode) || "natural");
+  const [sequence, setSequence] = useState<string[]>(() => state.gradientSeq);
+  const [pinnedHexes, setPinnedHexes] = useState<string[]>(() => state.gradientPinned);
   const [selectedSeqHex, setSelectedSeqHex] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [maxColors, setMaxColors] = useState<number>(0); // 0 = not yet set
+  const [maxColors, setMaxColors] = useState<number>(() => state.gradientMaxColors);
 
   const [perpRel, setPerpRel] = useState(NATURAL_PERP_THRESHOLD);
   const [perpCap, setPerpCap] = useState(NATURAL_PERP_ABS_CAP);
@@ -118,8 +118,13 @@ export default function Gradients() {
   const perpOpts = useMemo(() => ({ threshold: perpRel, absCap: perpCap }), [perpRel, perpCap]);
 
   // Keep a ref so the seeding effect can check pins without adding them to its dep array.
-  const pinnedRef = useRef<string[]>([]);
+  const pinnedRef = useRef<string[]>(state.gradientPinned);
   useEffect(() => { pinnedRef.current = pinnedHexes; }, [pinnedHexes]);
+  // Sync gradient state back to the store so it survives tab navigation.
+  useEffect(() => {
+    dispatch({ type: "SET_GRADIENT", seq: sequence, pinned: pinnedHexes, sortMode, maxColors });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sequence, pinnedHexes, sortMode, maxColors]);
 
   // Sort a set of colours according to the given mode (or the current sortMode).
   function sortWithMode(cs: string[], m: GradientMode = sortMode): string[] {
@@ -289,11 +294,33 @@ export default function Gradients() {
         if (candidates.length === 0) return prev;
         return [...prev, ...candidates];
       } else {
-        const pinned = prev.filter((h) => pinnedHexes.includes(h));
-        const nonPinned = prev.filter((h) => !pinnedHexes.includes(h));
-        const needed = Math.max(0, effective - pinned.length);
-        const selected = needed > 0 ? pickEvenly(nonPinned, needed) : [];
-        return prev.filter((h) => pinned.includes(h) || selected.includes(h));
+        // Iteratively remove the most redundant non-pinned color: the one whose
+        // removal creates the smallest new gap in OKLab space (i.e., it's closest
+        // to the straight line between its neighbors). Outliers have large neighbor
+        // distances that vanish when they're removed, so they get evicted first.
+        let result = [...prev];
+        let labs = result.map(hexToOklab);
+        while (result.length > effective) {
+          let bestIdx = -1;
+          let bestGapSq = Infinity;
+          for (let i = 0; i < result.length; i++) {
+            if (pinnedHexes.includes(result[i])) continue;
+            const lLab = i > 0 ? labs[i - 1] : null;
+            const rLab = i < result.length - 1 ? labs[i + 1] : null;
+            let gapSq: number;
+            if (lLab && rLab) {
+              gapSq = (lLab.L - rLab.L) ** 2 + (lLab.a - rLab.a) ** 2 + (lLab.b - rLab.b) ** 2;
+            } else {
+              const nb = lLab ?? rLab!;
+              gapSq = (labs[i].L - nb.L) ** 2 + (labs[i].a - nb.a) ** 2 + (labs[i].b - nb.b) ** 2;
+            }
+            if (gapSq < bestGapSq) { bestGapSq = gapSq; bestIdx = i; }
+          }
+          if (bestIdx === -1) break;
+          result.splice(bestIdx, 1);
+          labs.splice(bestIdx, 1);
+        }
+        return result;
       }
     });
   }
@@ -343,6 +370,7 @@ export default function Gradients() {
         // Gradient chip dragged to trash — remove from gradient.
         setSequence((prev) => prev.filter((h) => h !== activeIdStr));
         setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
+        setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== activeIdStr).length), prev - 1));
       }
     } else if (overIdStr === "shadow-zone" || overIdStr === "highlight-zone") {
       const hex = activeIdStr.startsWith("shelf:") ? activeIdStr.slice(6) : activeIdStr;
@@ -355,6 +383,7 @@ export default function Gradients() {
     } else if (overIdStr === "shelf-drop-zone") {
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
+      setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== activeIdStr).length), prev - 1));
     } else {
       setSequence((prev) => {
         const oldIdx = prev.indexOf(activeIdStr);
@@ -980,8 +1009,8 @@ export default function Gradients() {
               Add to shelf
             </IonButton>
           )}
-          {/* ── Trash zone (DMC mode) ─────────────────────────────────── */}
-          {isDmcMode && (
+          {/* ── Trash zone ───────────────────────────────────────────── */}
+          {sequence.length > 0 && (
             <div
               ref={setTrashRef}
               style={{
@@ -1003,7 +1032,7 @@ export default function Gradients() {
                 userSelect: "none",
               }}
             >
-              🗑 Drop here to delete from gradient or collection
+              🗑 Drop here to remove{isDmcMode ? " from gradient or collection" : ""}
             </div>
           )}
 
