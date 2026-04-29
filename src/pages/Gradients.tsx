@@ -463,7 +463,11 @@ export default function Gradients() {
   }
 
   function handleDragOver({ over }: DragOverEvent) {
-    if (over) lastOverIdRef.current = String(over.id);
+    const id = over ? String(over.id) : null;
+    if (id !== lastOverIdRef.current) {
+      console.log("[drag-over] target changed:", lastOverIdRef.current, "→", id);
+    }
+    if (over) lastOverIdRef.current = id!;
   }
 
   function handleDragEnd({ active, over }: DragEndEvent) {
@@ -475,12 +479,19 @@ export default function Gradients() {
     // finds it even if the pointer landed on a child element (chip label, etc).
     let overIdStr = over ? String(over.id) : null;
     const pt = lastPointerRef.current;
-    if (pt) {
-      const el = document.elementFromPoint(pt.x, pt.y);
-      const zone = (el?.closest("[data-drop-zone]") as HTMLElement | null)?.dataset.dropZone;
-      console.log("[drop]", { over: over?.id, domEl: el?.tagName, domZone: zone, lastRef: lastOverIdRef.current });
-      if (zone && NAMED_ZONES.has(zone)) overIdStr = zone;
-    }
+    const el = pt ? document.elementFromPoint(pt.x, pt.y) : null;
+    const domZone = (el?.closest("[data-drop-zone]") as HTMLElement | null)?.dataset.dropZone;
+    // eslint-disable-next-line no-debugger
+    debugger; // ← browser breakpoint: inspect active, over, el, domZone, lastOverIdRef.current
+    console.log("[drop]", {
+      active: activeIdStr,
+      over: over?.id ?? null,
+      domEl: el?.tagName,
+      domClass: el instanceof HTMLElement ? el.className : undefined,
+      domZone,
+      lastRef: lastOverIdRef.current,
+    });
+    if (domZone && NAMED_ZONES.has(domZone)) overIdStr = domZone;
     // Ref fallback: if the DOM walk missed but the last stable hover was a
     // named zone, honour that intent.
     if (!overIdStr || !NAMED_ZONES.has(overIdStr)) {
@@ -488,6 +499,7 @@ export default function Gradients() {
         overIdStr = lastOverIdRef.current;
       }
     }
+    console.log("[drop] resolved →", overIdStr);
     lastOverIdRef.current = null;
     lastPointerRef.current = null;
     if (!overIdStr) return;
