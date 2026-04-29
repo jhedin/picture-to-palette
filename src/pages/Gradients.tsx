@@ -478,6 +478,7 @@ export default function Gradients() {
     if (pt) {
       const el = document.elementFromPoint(pt.x, pt.y);
       const zone = (el?.closest("[data-drop-zone]") as HTMLElement | null)?.dataset.dropZone;
+      console.log("[drop]", { over: over?.id, domEl: el?.tagName, domZone: zone, lastRef: lastOverIdRef.current });
       if (zone && NAMED_ZONES.has(zone)) overIdStr = zone;
     }
     // Ref fallback: if the DOM walk missed but the last stable hover was a
@@ -1269,6 +1270,7 @@ export default function Gradients() {
                   border: "3px solid white",
                   boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
                   opacity: 0.9,
+                  pointerEvents: "none",
                 }} />
               )}
             </DragOverlay>,
