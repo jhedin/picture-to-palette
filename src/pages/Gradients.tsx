@@ -16,7 +16,8 @@ import {
   DndContext,
   DragOverlay,
   MeasuringStrategy,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   pointerWithin,
   rectIntersection,
@@ -440,7 +441,8 @@ export default function Gradients() {
   );
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
   );
 
   // Track the last stable "over" and raw pointer position during drag so
@@ -457,6 +459,7 @@ export default function Gradients() {
   }, [activeId]);
 
   function handleDragStart({ active }: DragStartEvent) {
+    console.log("[drag-start]", String(active.id));
     setActiveId(String(active.id));
     setSelectedSeqHex(null);
     lastOverIdRef.current = null;
@@ -781,13 +784,19 @@ export default function Gradients() {
           </IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent className="ion-padding">
+      <IonContent className="ion-padding" scrollY={activeId === null}>
         <DndContext
           sensors={sensors}
           collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          onDragCancel={({ active }) => {
+            console.log("🚨 [drag-cancel] gesture cancelled for:", String(active.id));
+            setActiveId(null);
+            lastOverIdRef.current = null;
+            lastPointerRef.current = null;
+          }}
           measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         >
           {/* ── Capture preview (DMC mode) ───────────────────────────── */}
@@ -1336,24 +1345,7 @@ function SeqItem({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: hex });
 
-  // Use onPointerUp with distance tracking for reliable tap detection on mobile
-  // (onClick can be suppressed by touch-action:none on some iOS builds).
-  const tapRef = useRef<{ x: number; y: number } | null>(null);
-  const pointerHandlers = {
-    onPointerDown(e: React.PointerEvent) {
-      tapRef.current = { x: e.clientX, y: e.clientY };
-      // Forward to dnd-kit's sensor so drag still works.
-      (listeners as Record<string, (e: React.PointerEvent) => void>)?.onPointerDown?.(e);
-    },
-    onPointerUp(e: React.PointerEvent) {
-      if (tapRef.current) {
-        const dist = Math.hypot(e.clientX - tapRef.current.x, e.clientY - tapRef.current.y);
-        tapRef.current = null;
-        if (dist < 8) onSelect();
-      }
-    },
-  };
-
+  // TouchSensor delay:150 distinguishes tap from drag, so standard onClick is safe.
   const boxShadow = isSelected
     ? "0 0 0 2px white, 0 0 0 4px rgba(0,0,0,0.35)"
     : undefined;
@@ -1363,7 +1355,7 @@ function SeqItem({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      {...pointerHandlers}
+      onClick={onSelect}
       title={title}
       style={{
         position: "relative",
