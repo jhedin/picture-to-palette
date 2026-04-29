@@ -509,11 +509,13 @@ export default function Gradients() {
     if (activeIdStr.startsWith("shelf:")) {
       const hex = activeIdStr.slice(6);
       setSequence((prev) => {
+        console.log("[drop-seq] prev=", prev, "hex=", hex, "over=", overIdStr, "alreadyIn=", prev.includes(hex));
         if (prev.includes(hex)) return prev;
         const overIdx = prev.indexOf(overIdStr);
         const insertAt = overIdx >= 0 ? overIdx : prev.length;
         const next = [...prev];
         next.splice(insertAt, 0, hex);
+        console.log("[drop-seq] next=", next);
         return next;
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
