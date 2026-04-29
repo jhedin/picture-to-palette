@@ -1283,7 +1283,7 @@ export default function Gradients() {
           )}
 
           {createPortal(
-            <DragOverlay zIndex={9999} dropAnimation={null}>
+            <DragOverlay zIndex={9999} dropAnimation={null} style={{ pointerEvents: "none" }}>
               {activeHex && (
                 <div style={{
                   width: 44,
