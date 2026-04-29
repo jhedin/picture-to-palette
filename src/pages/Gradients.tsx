@@ -786,7 +786,7 @@ export default function Gradients() {
           </IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent className="ion-padding" scrollY={activeId === null}>
+      <IonContent className="ion-padding">
         <DndContext
           sensors={sensors}
           collisionDetection={collisionDetection}
@@ -1283,7 +1283,7 @@ export default function Gradients() {
           )}
 
           {createPortal(
-            <DragOverlay zIndex={9999} dropAnimation={null}>
+            <DragOverlay zIndex={9999} dropAnimation={null} style={{ pointerEvents: "none" }}>
               {activeHex && (
                 <div style={{
                   width: 44,
