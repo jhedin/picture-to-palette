@@ -126,6 +126,14 @@ export default function Gradients() {
   // Keep a ref so the seeding effect can check pins without adding them to its dep array.
   const pinnedRef = useRef<string[]>(state.gradientPinned);
   useEffect(() => { pinnedRef.current = pinnedHexes; }, [pinnedHexes]);
+
+  // Log the full shelf once when the palette first loads.
+  const shelfLoggedRef = useRef(false);
+  useEffect(() => {
+    if (colorSpace.length === 0 || shelfLoggedRef.current) return;
+    shelfLoggedRef.current = true;
+    console.log("[shelf] initial palette (%d colors):", colorSpace.length, colorSpace);
+  }, [colorSpace]);
   // Sync gradient state back to the store so it survives tab navigation.
   useEffect(() => {
     dispatch({ type: "SET_GRADIENT", seq: sequence, pinned: pinnedHexes, sortMode, maxColors });
@@ -189,6 +197,8 @@ export default function Gradients() {
       const limit = maxColors > 0 ? maxColors : colorSpace.length;
       seeded = limit < sorted.length ? pickEvenly(sorted, limit) : sorted;
     }
+    const reason = sequence.length === 0 ? "empty sequence" : "anchors changed";
+    console.log("[seed]", reason, "→", seeded.length, "colors:", seeded);
     setSequence(seeded);
     // Pin the anchor endpoints so the slider can't remove them.
     setPinnedHexes(anchorAHex && anchorBHex ? [anchorAHex, anchorBHex] : []);
@@ -270,6 +280,7 @@ export default function Gradients() {
             // minimum distance to any already-selected color, subject to the
             // perp corridor. Guarantees perceptually spread coverage.
             let bestMinDistSq = -1;
+            const farthestLog: { hex: string; minDist: number }[] = [];
             for (const { hex, lab } of csLabs) {
               if (used.has(hex)) continue;
               if (abLenSq > 0) {
@@ -284,7 +295,12 @@ export default function Gradients() {
                 const dSq = (lab.L - el.L) ** 2 + (lab.a - el.a) ** 2 + (lab.b - el.b) ** 2;
                 if (dSq < minDistSq) minDistSq = dSq;
               }
+              farthestLog.push({ hex, minDist: Math.sqrt(minDistSq) });
               if (minDistSq > bestMinDistSq) { bestMinDistSq = minDistSq; bestHex = hex; bestLab = lab; }
+            }
+            if (bestHex) {
+              const top5 = [...farthestLog].sort((a, b) => b.minDist - a.minDist).slice(0, 5);
+              console.log(`[fill] farthest step ${step + 1}: chose ${bestHex} (minDist=${Math.sqrt(bestMinDistSq).toFixed(3)}) from ${farthestLog.length} candidates`, top5);
             }
           } else {
             // Gap-fill: find the largest gap, then insert the color nearest to
@@ -293,6 +309,8 @@ export default function Gradients() {
               const a = labs[i], b = labs[i + 1];
               return { i, dSq: (a.L - b.L) ** 2 + (a.a - b.a) ** 2 + (a.b - b.b) ** 2 };
             }).sort((x, y) => y.dSq - x.dSq);
+            let winningGapIdx = -1;
+            const gapFillLog: { hex: string; distToMid: number }[] = [];
             for (const { i: gapIdx } of gaps) {
               const a = labs[gapIdx], b = labs[gapIdx + 1];
               const ideal = { L: (a.L + b.L) / 2, a: (a.a + b.a) / 2, b: (a.b + b.b) / 2 };
@@ -304,6 +322,7 @@ export default function Gradients() {
                 tMax = Math.max(t_lo, t_hi) + 0.02;
               }
               let bestDistSq = Infinity;
+              const stepLog: { hex: string; distToMid: number }[] = [];
               for (const { hex, lab } of csLabs) {
                 if (used.has(hex)) continue;
                 let perpSq = 0;
@@ -316,9 +335,14 @@ export default function Gradients() {
                   if (perpSq > maxPerpSq) continue;
                 }
                 const dSq = (lab.L - ideal.L) ** 2 + (lab.a - ideal.a) ** 2 + (lab.b - ideal.b) ** 2 + perpSq;
+                stepLog.push({ hex, distToMid: Math.sqrt(dSq) });
                 if (dSq < bestDistSq) { bestDistSq = dSq; bestHex = hex; bestLab = lab; }
               }
-              if (bestHex) break;
+              if (bestHex) { winningGapIdx = gapIdx; gapFillLog.splice(0, Infinity, ...stepLog); break; }
+            }
+            if (bestHex) {
+              const top5 = [...gapFillLog].sort((a, b) => a.distToMid - b.distToMid).slice(0, 5);
+              console.log(`[fill] gap-fill step ${step + 1}: gap ${result[winningGapIdx]}→${result[winningGapIdx + 1]}, chose ${bestHex} from ${gapFillLog.length} candidates`, top5);
             }
           }
 
@@ -404,6 +428,7 @@ export default function Gradients() {
           if (gapSq < bestGapSq) { bestGapSq = gapSq; bestIdx = i; }
         }
         if (bestIdx === -1) break;
+        console.log("[fill] shrink: removed", result[bestIdx], "(smallest neighbor-gap, gapSq=" + bestGapSq.toFixed(4) + ")");
         result.splice(bestIdx, 1);
         labs.splice(bestIdx, 1);
       }
@@ -459,7 +484,6 @@ export default function Gradients() {
   }, [activeId]);
 
   function handleDragStart({ active }: DragStartEvent) {
-    console.log("[drag-start]", String(active.id));
     setActiveId(String(active.id));
     setSelectedSeqHex(null);
     lastOverIdRef.current = null;
@@ -467,9 +491,6 @@ export default function Gradients() {
 
   function handleDragOver({ over }: DragOverEvent) {
     const id = over ? String(over.id) : null;
-    if (id !== lastOverIdRef.current) {
-      console.log("[drag-over] target changed:", lastOverIdRef.current, "→", id);
-    }
     if (over) lastOverIdRef.current = id!;
   }
 
@@ -484,16 +505,6 @@ export default function Gradients() {
     const pt = lastPointerRef.current;
     const el = pt ? document.elementFromPoint(pt.x, pt.y) : null;
     const domZone = (el?.closest("[data-drop-zone]") as HTMLElement | null)?.dataset.dropZone;
-    // eslint-disable-next-line no-debugger
-    debugger; // ← browser breakpoint: inspect active, over, el, domZone, lastOverIdRef.current
-    console.log("[drop]", {
-      active: activeIdStr,
-      over: over?.id ?? null,
-      domEl: el?.tagName,
-      domClass: el instanceof HTMLElement ? el.className : undefined,
-      domZone,
-      lastRef: lastOverIdRef.current,
-    });
     if (domZone && NAMED_ZONES.has(domZone)) overIdStr = domZone;
     // Ref fallback: if the DOM walk missed but the last stable hover was a
     // named zone, honour that intent.
@@ -502,20 +513,18 @@ export default function Gradients() {
         overIdStr = lastOverIdRef.current;
       }
     }
-    console.log("[drop] resolved →", overIdStr);
     lastOverIdRef.current = null;
     lastPointerRef.current = null;
     if (!overIdStr) return;
     if (activeIdStr.startsWith("shelf:")) {
       const hex = activeIdStr.slice(6);
+      console.log("[add]", hex, "→ gradient via drag (near", overIdStr, ")");
       setSequence((prev) => {
-        console.log("[drop-seq] prev=", prev, "hex=", hex, "over=", overIdStr, "alreadyIn=", prev.includes(hex));
         if (prev.includes(hex)) return prev;
         const overIdx = prev.indexOf(overIdStr);
         const insertAt = overIdx >= 0 ? overIdx : prev.length;
         const next = [...prev];
         next.splice(insertAt, 0, hex);
-        console.log("[drop-seq] next=", next);
         return next;
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
@@ -523,12 +532,14 @@ export default function Gradients() {
       if (activeIdStr.startsWith("shelf:")) {
         // Shelf item dragged to trash — remove from dmcSet permanently.
         const hex = activeIdStr.slice(6);
+        console.log("[remove]", hex, "from DMC collection (dragged to trash)");
         if (isDmcMode) {
           const dmc = dmcPool.find((d) => d.hex === hex);
           if (dmc) dispatch({ type: "REMOVE_DMC", id: dmc.id });
         }
       } else {
         // Gradient chip dragged to trash — remove from gradient.
+        console.log("[remove]", activeIdStr, "from gradient (dragged to trash)");
         setSequence((prev) => prev.filter((h) => h !== activeIdStr));
         setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
         setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== activeIdStr).length), prev - 1));
@@ -536,12 +547,14 @@ export default function Gradients() {
     } else if (overIdStr === "shadow-zone" || overIdStr === "highlight-zone") {
       const hex = activeIdStr.startsWith("shelf:") ? activeIdStr.slice(6) : activeIdStr;
       const isShadow = overIdStr === "shadow-zone";
+      console.log("[add]", hex, "as", isShadow ? "shadow" : "highlight", "(dragged to zone)");
       setSequence((prev) => {
         const without = prev.filter((h) => h !== hex);
         return isShadow ? [hex, ...without] : [...without, hex];
       });
       setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
     } else if (overIdStr === "shelf-drop-zone") {
+      console.log("[remove]", activeIdStr, "from gradient (dragged back to shelf)");
       setSequence((prev) => prev.filter((h) => h !== activeIdStr));
       setPinnedHexes((prev) => prev.filter((h) => h !== activeIdStr));
       setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== activeIdStr).length), prev - 1));
@@ -723,6 +736,7 @@ export default function Gradients() {
     if (shadows.length === 0) return;
     const hex = shadows[0];
     if (sequence.includes(hex)) return;
+    console.log("[add]", hex, "as shadow (extend button, from", sequence[0], ")");
     setSequence((prev) => [hex, ...prev]);
   }
 
@@ -733,6 +747,7 @@ export default function Gradients() {
     if (highlights.length === 0) return;
     const hex = highlights[highlights.length - 1];
     if (sequence.includes(hex)) return;
+    console.log("[add]", hex, "as highlight (extend button, from", sequence[sequence.length - 1], ")");
     setSequence((prev) => [...prev, hex]);
   }
 
@@ -793,8 +808,7 @@ export default function Gradients() {
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
-          onDragCancel={({ active }) => {
-            console.log("🚨 [drag-cancel] gesture cancelled for:", String(active.id));
+          onDragCancel={() => {
             setActiveId(null);
             lastOverIdRef.current = null;
             lastPointerRef.current = null;
@@ -1143,6 +1157,7 @@ export default function Gradients() {
                         title="Remove from gradient"
                         onClick={() => {
                           const hex = selectedSeqHex;
+                          console.log("[remove]", hex, "from gradient (panel remove button)");
                           setSequence((prev) => prev.filter((h) => h !== hex));
                           setPinnedHexes((prev) => prev.filter((h) => h !== hex));
                           setMaxColors((prev) => Math.max(Math.max(1, pinnedHexes.filter((h) => h !== hex).length), prev - 1));
@@ -1233,6 +1248,7 @@ export default function Gradients() {
                       hex={hex}
                       title={dmcEntry ? `${dmcEntry.id} — ${dmcEntry.name}` : hex}
                       onTap={() => {
+                        console.log("[add]", hex, "→ gradient end via tap");
                         setSequence((prev) => prev.includes(hex) ? prev : [...prev, hex]);
                         setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
                       }}
