@@ -737,7 +737,10 @@ export default function Gradients() {
     const hex = shadows[0];
     if (sequence.includes(hex)) return;
     console.log("[add]", hex, "as shadow (extend button, from", sequence[0], ")");
+    const dmc = DMC_COLORS.find((d) => d.hex === hex);
+    if (dmc) dispatch({ type: "ADD_DMC", color: dmc });
     setSequence((prev) => [hex, ...prev]);
+    setPinnedHexes((prev) => prev.includes(hex) ? prev : [hex, ...prev]);
   }
 
   function handleExtendHighlight() {
@@ -748,7 +751,10 @@ export default function Gradients() {
     const hex = highlights[highlights.length - 1];
     if (sequence.includes(hex)) return;
     console.log("[add]", hex, "as highlight (extend button, from", sequence[sequence.length - 1], ")");
+    const dmc = DMC_COLORS.find((d) => d.hex === hex);
+    if (dmc) dispatch({ type: "ADD_DMC", color: dmc });
     setSequence((prev) => [...prev, hex]);
+    setPinnedHexes((prev) => prev.includes(hex) ? prev : [...prev, hex]);
   }
 
   const shelf = colorSpace.filter((h) => !sequence.includes(h));
