@@ -199,11 +199,11 @@ export function suggestCrop(image: ImageData): CropBox {
   return computeCropBox(labels, backgroundLabels, W, H);
 }
 
-// Performance cap for SLIC.  256 px gives ~33 segments on a typical photo;
-// each yarn ball ends up as 1-3 segments.  Quality is much better than the
-// old 128 px direct-pixel mean-shift: SLIC preserves small regions as their
-// own segments regardless of resolution.
-const SLIC_MAX_DIM = 256;
+// Cap used before segmentation.  Running in a Web Worker means this no longer
+// constrains UI responsiveness — 512 px gives ~4× the pixel count of the old
+// 256 px cap, preserving highlights and fine color regions that were
+// previously merged or dropped by the downsampler.
+const SLIC_MAX_DIM = 512;
 
 function capSize(src: ImageData): ImageData {
   if (src.width <= SLIC_MAX_DIM && src.height <= SLIC_MAX_DIM) return src;

@@ -55,6 +55,43 @@ if (typeof URL.createObjectURL === "undefined") {
   URL.revokeObjectURL = (_url: string) => {};
 }
 
+// jsdom doesn't provide Worker.  Stub it so Capture tests can exercise the
+// extraction flow: postMessage({ type:"extract" }) delegates to the (mockable)
+// extractPalette export so vi.mock("../lib/mean-shift.worker") still works.
+if (typeof globalThis.Worker === "undefined") {
+  class MockWorker {
+    private handlers: Record<string, Array<(e: Event) => void>> = {};
+    constructor(_url: string | URL, _opts?: WorkerOptions) {}
+    addEventListener(type: string, fn: (e: Event) => void) {
+      (this.handlers[type] ??= []).push(fn);
+    }
+    removeEventListener(type: string, fn: (e: Event) => void) {
+      this.handlers[type] = (this.handlers[type] ?? []).filter((f) => f !== fn);
+    }
+    postMessage(msg: unknown) {
+      if ((msg as { type?: string })?.type !== "extract") return;
+      const { imageData, cropRegion, options } = msg as {
+        imageData: ImageData;
+        cropRegion: unknown;
+        options: unknown;
+      };
+      Promise.resolve().then(async () => {
+        try {
+          const mod = await import("./lib/mean-shift.worker");
+          const result = await mod.extractPalette(imageData, cropRegion as never, options as never);
+          const event = new MessageEvent("message", { data: { type: "result", ...result } });
+          (this.handlers["message"] ?? []).forEach((fn) => fn(event));
+        } catch (err) {
+          const event = new ErrorEvent("error", { message: String(err) });
+          (this.handlers["error"] ?? []).forEach((fn) => fn(event));
+        }
+      });
+    }
+    terminate() {}
+  }
+  globalThis.Worker = MockWorker as unknown as typeof Worker;
+}
+
 // jsdom doesn't ship ImageData; provide a minimal polyfill for canvas tests.
 if (typeof globalThis.ImageData === "undefined") {
   class ImageDataPolyfill {
