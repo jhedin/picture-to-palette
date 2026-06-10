@@ -14,7 +14,7 @@ import {
   IonToolbar,
 } from "@ionic/react";
 import { useHistory } from "react-router-dom";
-import { extractPalette, suggestCrop, type CropBox, type DebugData, type ExtractionOptions, type SegmentMethod, DEFAULT_OPTIONS } from "../lib/mean-shift.worker";
+import { suggestCrop, type CropBox, type DebugData, type ExtractionOptions, type SegmentMethod, DEFAULT_OPTIONS, type ExtractRequest } from "../lib/mean-shift.worker";
 import { hexToOklab, oklabToHex } from "../lib/color";
 import { usePalette } from "../lib/palette-store";
 import { CropOverlay } from "../components/CropOverlay";
@@ -24,6 +24,7 @@ type Status = "idle" | "scanning" | "cropping" | "extracting" | "ready" | "error
 export default function Capture() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
+  const workerRef = useRef<Worker | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const imageDataRef = useRef<ImageData | null>(null);
   const [cropBox, setCropBox] = useState<CropBox>({ x: 0, y: 0, w: 1, h: 1 });
@@ -39,6 +40,8 @@ export default function Capture() {
   const [mergeFirst, setMergeFirst] = useState<string | null>(null);
   const { state, dispatch } = usePalette();
   const history = useHistory();
+
+  useEffect(() => () => { workerRef.current?.terminate(); }, []);
 
   useEffect(() => () => {
     if (photoUrl) URL.revokeObjectURL(photoUrl);
@@ -95,11 +98,30 @@ export default function Capture() {
   async function runExtraction(crop: CropBox) {
     if (!imageDataRef.current) return;
     setStatus("extracting");
-    // Yield to the browser's paint pipeline so the spinner renders before
-    // the main thread blocks on worker message serialisation.
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
-      const { hexes, debug } = await extractPalette(imageDataRef.current, crop, options);
+      if (!workerRef.current) {
+        workerRef.current = new Worker(
+          new URL("../lib/mean-shift.worker.ts", import.meta.url),
+          { type: "module" },
+        );
+      }
+      const worker = workerRef.current;
+      const { hexes, debug } = await new Promise<{ hexes: string[]; debug: DebugData }>((resolve, reject) => {
+        const onMessage = (e: MessageEvent) => {
+          if (e.data.type !== "result") return;
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+          resolve({ hexes: e.data.hexes, debug: e.data.debug });
+        };
+        const onError = (e: ErrorEvent) => {
+          worker.removeEventListener("message", onMessage);
+          worker.removeEventListener("error", onError);
+          reject(new Error(e.message));
+        };
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+        worker.postMessage({ type: "extract", imageData: imageDataRef.current!, cropRegion: crop, options } satisfies ExtractRequest);
+      });
       if (hexes.length === 0) {
         setStatus("error");
         setErrorMsg("Couldn't find distinct colors in this region");
